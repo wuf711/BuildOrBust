@@ -1,0 +1,30 @@
+# ===== Unreal Engine 生成目录（不提交，可重建）=====
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# ===== 打包产物（APK 超过 GitHub 100MB 单文件上限，走 Releases 附件发布）=====
+Packaged/
+*.apk
+
+# ===== IDE / 解决方案文件（UE 可重新生成）=====
+.vs/
+.vsconfig
+*.sln
+*.slnx
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# ===== 操作系统 =====
+Thumbs.db
+.DS_Store
+
+# ===== 开发工具内部文件（与游戏无关，不提交）=====
+.claude/
+.mcp.json
+HANDOFF_*.md
