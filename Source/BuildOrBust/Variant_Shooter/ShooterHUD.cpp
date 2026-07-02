@@ -53,11 +53,10 @@ void AShooterHUD::DrawHUD()
 	if (GS && GS->IsMatchOver())
 	{
 		int32 Wave = 0, MaxW = 10;
-		for (TActorIterator<AWaveManager> It(World); It; ++It)
+		if (TActorIterator<AWaveManager> It(World); It)
 		{
 			Wave = FMath::Min(It->GetCurrentWave(), It->MaxWave);
 			MaxW = It->MaxWave;
-			break;
 		}
 
 		// 按 PlayerId 稳定排序 → P1/P2 在两端屏幕指向同一人
@@ -121,20 +120,23 @@ void AShooterHUD::DrawHUD()
 		DrawLeft(TEXT("【目标】双人同场竞技：击杀丧尸得分"), FLinearColor::White);
 		DrawLeft(TEXT("守住中央核心，撑满十波后比分高者获胜！"), FLinearColor(1.0f, 0.9f, 0.5f));
 	}
+	else
+	{
+		// 简报隐藏后保留其占位，避免波次/核心血量行上移贴住顶部血条
+		LY += 2.0f * LH;
+	}
 
-	for (TActorIterator<AWaveManager> It(World); It; ++It)
+	if (TActorIterator<AWaveManager> It(World); It)
 	{
 		DrawLeft(FString::Printf(TEXT("第 %d / %d 波      剩余敌人：%d"),
 			It->GetCurrentWave(), It->MaxWave, It->GetAliveEnemyCount()),
 			FLinearColor(1.0f, 0.6f, 0.1f));
-		break;
 	}
 
-	for (TActorIterator<ABaseCore> It(World); It; ++It)
+	if (TActorIterator<ABaseCore> It(World); It)
 	{
 		DrawLeft(FString::Printf(TEXT("核心血量：%.0f / %.0f"), It->GetBaseHP(), It->MaxBaseHP),
 			FLinearColor(1.0f, 0.3f, 0.3f));
-		break;
 	}
 
 	// ===== 右上：本玩家 vs 同场 实时得分 =====

@@ -54,22 +54,20 @@ void AShooterGameState::UpdateScoreboard()
 		TEXT("【目标】守住中央核心，击杀来袭的丧尸，撑过全部波次即胜利！"));
 
 	// 波次 + 剩余敌人
-	for (TActorIterator<AWaveManager> It(World); It; ++It)
+	if (TActorIterator<AWaveManager> It(World); It)
 	{
 		AWaveManager* WM = *It;
 		GEngine->AddOnScreenDebugMessage(Key++, 0.6f, FColor::Orange,
 			FString::Printf(TEXT("第 %d / %d 波      剩余敌人：%d"),
 				WM->GetCurrentWave(), WM->MaxWave, WM->GetAliveEnemyCount()));
-		break;
 	}
 
 	// 核心血量
-	for (TActorIterator<ABaseCore> It(World); It; ++It)
+	if (TActorIterator<ABaseCore> It(World); It)
 	{
 		ABaseCore* BC = *It;
 		GEngine->AddOnScreenDebugMessage(Key++, 0.6f, FColor::Red,
 			FString::Printf(TEXT("核心血量：%.0f / %.0f"), BC->GetBaseHP(), BC->MaxBaseHP));
-		break;
 	}
 
 	// 计分板（按分数从高到低）

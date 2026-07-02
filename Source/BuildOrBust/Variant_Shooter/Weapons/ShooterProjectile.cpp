@@ -5,6 +5,7 @@
 #include "Components/SphereComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "GameFramework/Character.h"
+#include "Variant_Shooter/ShooterCharacter.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/DamageType.h"
 #include "GameFramework/Pawn.h"
@@ -147,10 +148,17 @@ void AShooterProjectile::ProcessHit(AActor* HitActor, UPrimitiveComponent* HitCo
 		// ignore the owner of this projectile
 		if (HitCharacter != GetOwner() || bDamageOwner)
 		{
-			// 只有服务器端的子弹造成伤害：客户端本地子弹仅作视觉，避免各打各的、击杀不同步、计分错误
-			if (GetInstigator() && GetWorld() && GetWorld()->GetNetMode() != NM_Client)
+			if (GetWorld() && GetWorld()->GetNetMode() == NM_Client)
 			{
-				// apply damage to the character
+				// 客户端(P2)：本地子弹命中后，把命中目标上报服务器权威结算（画面里打中的就是得分的）
+				if (AShooterCharacter* Shooter = Cast<AShooterCharacter>(GetInstigator()))
+				{
+					Shooter->Server_ReportHit(HitCharacter, HitDamage);
+				}
+			}
+			else if (GetInstigator())
+			{
+				// 服务器 / 单机：直接结算伤害
 				UGameplayStatics::ApplyDamage(HitCharacter, HitDamage, GetInstigator()->GetController(), this, HitDamageType);
 			}
 		}

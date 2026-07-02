@@ -135,7 +135,8 @@ protected:
 	/** If true, this character is currently shooting its weapon */
 	bool bIsShooting = false;
 
-	/** If true, this character has already died */
+	/** If true, this character has already died（复制到客户端，让 P2 也能看到丧尸倒下、失去碰撞、正确计数） */
+	UPROPERTY(ReplicatedUsing = OnRep_IsDead)
 	bool bIsDead = false;
 
 	/** The controller that landed the killing blow */
@@ -206,6 +207,9 @@ protected:
 	/** Gameplay cleanup */
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
+	/** 复制属性（bIsDead） */
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 public:
 
 	/** Handle incoming damage */
@@ -248,6 +252,13 @@ protected:
 
 	/** Called when HP is depleted and the character should die */
 	void Die();
+
+	/** 死亡视觉表现（布娃娃 + 关碰撞 + 死亡标签），服务器与客户端都执行 */
+	void PlayDeathEffects();
+
+	/** bIsDead 复制到客户端时触发：在客户端也播放死亡表现，让丧尸在 P2 端倒下 */
+	UFUNCTION()
+	void OnRep_IsDead();
 
 	/** Called after death to destroy the actor */
 	void DeferredDestruction();

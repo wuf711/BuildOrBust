@@ -15,10 +15,12 @@ ABoBJumpPad::ABoBJumpPad()
 	Trigger->SetCollisionProfileName(TEXT("OverlapAllDynamic"));
 	Trigger->SetGenerateOverlapEvents(true);
 
-	// 视觉网格：扁平台，碰撞关闭（只靠触发盒），网格/材质在生成时指定
+	// 视觉网格：扁平台。开启碰撞防穿模：玩家可踩上台面（20cm 可自动迈上），
+	// 丧尸不会再从台身穿过——台面参与动态导航，丧尸寻路时自动绕行
 	PadMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PadMesh"));
 	PadMesh->SetupAttachment(Trigger);
-	PadMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PadMesh->SetCollisionProfileName(TEXT("BlockAll"));
+	PadMesh->SetCanEverAffectNavigation(true);
 }
 
 void ABoBJumpPad::BeginPlay()

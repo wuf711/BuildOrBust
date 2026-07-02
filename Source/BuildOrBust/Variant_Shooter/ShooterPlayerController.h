@@ -83,4 +83,19 @@ protected:
 
 	/** Returns true if the player should use UMG touch controls */
 	bool ShouldUseTouchControls() const;
+
+	//~ 移动端触摸拖动转视角（拖右半屏旋转镜头，不依赖 UMG 摇杆）
+	void OnTouchLookStarted(ETouchIndex::Type FingerIndex, FVector Location);
+	void OnTouchLookMoved(ETouchIndex::Type FingerIndex, FVector Location);
+	void OnTouchLookEnded(ETouchIndex::Type FingerIndex, FVector Location);
+
+	/** 当前用于转视角的手指索引（-1 = 无） */
+	int32 LookFingerIndex = -1;
+
+	/** 上一帧该手指的屏幕位置 */
+	FVector2D LastLookPos = FVector2D::ZeroVector;
+
+	/** 触摸转视角灵敏度 */
+	UPROPERTY(EditAnywhere, Category="Input|Touch Controls")
+	float TouchLookSensitivity = 0.2f;
 };

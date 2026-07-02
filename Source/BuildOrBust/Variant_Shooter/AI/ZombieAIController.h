@@ -19,9 +19,10 @@ public:
 	UPROPERTY(EditAnywhere, Category="Zombie")
 	float ChaseInterval = 0.5f;
 
-	// 停止距离（接近到此距离即停，由近战伤害负责攻击）。设大一些让丧尸停在基地表面外，不钻进基地模型
+	// 停止距离（接近到此距离即停，由近战伤害负责攻击）。
+	// 核心加了半径~390的实体碰撞球后丧尸物理上最近只能贴到~420，判定放宽到450（仍在核心啃食区450内）
 	UPROPERTY(EditAnywhere, Category="Zombie")
-	float AcceptanceRadius = 300.0f;
+	float AcceptanceRadius = 450.0f;
 
 protected:
 	virtual void OnPossess(APawn* InPawn) override;

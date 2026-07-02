@@ -5,6 +5,10 @@ DerivedDataCache/
 Intermediate/
 Saved/
 
+# ===== 打包产物（APK 超过 GitHub 100MB 单文件上限，走 Releases 附件发布）=====
+Packaged/
+*.apk
+
 # ===== IDE / 解决方案文件（UE 可重新生成）=====
 .vs/
 .vsconfig

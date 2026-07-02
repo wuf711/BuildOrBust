@@ -128,13 +128,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Input")
 	void DoStopFiring();
 
-	/** 服务器权威开火：客户端开火时通知服务器在权威端实际开火，保证命中/击杀/计分对所有玩家都生效 */
+	/** 客户端权威命中上报：客户端子弹在本地判定命中后，请求服务器对该目标结算伤害（击杀归属本玩家、正确计分） */
 	UFUNCTION(Server, Reliable)
-	void Server_StartFiring();
-
-	/** 服务器权威停火 */
-	UFUNCTION(Server, Reliable)
-	void Server_StopFiring();
+	void Server_ReportHit(AActor* HitActor, float Damage);
 
 	/** Handles switch weapon input */
 	UFUNCTION(BlueprintCallable, Category="Input")

@@ -19,12 +19,21 @@
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/DamageType.h"
+#include "Net/UnrealNetwork.h"
 
 AShooterNPC::AShooterNPC()
 {
 	// 使用极简丧尸AI，并确保生成时自动接管
 	AIControllerClass = AZombieAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
+
+	bReplicates = true;   // 确保死亡状态(bIsDead)能复制到客户端
+}
+
+void AShooterNPC::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AShooterNPC, bIsDead);
 }
 
 void AShooterNPC::BeginPlay()
@@ -427,11 +436,13 @@ void AShooterNPC::Die()
 		return;
 	}
 
-	// raise the dead flag
+	// 置死亡标记：复制到客户端 → 各端 OnRep_IsDead 播放死亡表现（P2 也能看到丧尸倒下）
 	bIsDead = true;
 
-	// grant the death tag to the character
-	Tags.Add(DeathTag);
+	// 死亡视觉（服务器端立即执行；客户端由 OnRep_IsDead 执行）
+	PlayDeathEffects();
+
+	// ↓↓↓ 以下为服务器权威逻辑，只在服务器执行 ↓↓↓
 
 	// call the delegate
 	OnPawnDeath.Broadcast();
@@ -445,20 +456,38 @@ void AShooterNPC::Die()
 		GM->IncrementTeamScore(TeamByte);
 	}
 
-	// disable capsule collision
+	// schedule actor destruction
+	GetWorld()->GetTimerManager().SetTimer(DeathTimer, this, &AShooterNPC::DeferredDestruction, DeferredDestructionTime, false);
+}
+
+void AShooterNPC::OnRep_IsDead()
+{
+	// 客户端收到死亡复制：播放死亡表现（布娃娃 + 关碰撞），让 P2 端也看到丧尸真正死掉
+	if (bIsDead)
+	{
+		PlayDeathEffects();
+	}
+}
+
+void AShooterNPC::PlayDeathEffects()
+{
+	// grant the death tag to the character
+	Tags.Add(DeathTag);
+
+	// disable capsule collision（关掉碰撞后 P2 的子弹不会再打到尸体，避免"打不死"错觉）
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	// stop movement
-	GetCharacterMovement()->StopMovementImmediately();
-	GetCharacterMovement()->StopActiveMovement();
+	if (GetCharacterMovement())
+	{
+		GetCharacterMovement()->StopMovementImmediately();
+		GetCharacterMovement()->DisableMovement();
+	}
 
 	// enable ragdoll physics on the third person mesh
 	GetMesh()->SetCollisionProfileName(RagdollCollisionProfile);
 	GetMesh()->SetSimulatePhysics(true);
 	GetMesh()->SetPhysicsBlendWeight(1.0f);
-
-	// schedule actor destruction
-	GetWorld()->GetTimerManager().SetTimer(DeathTimer, this, &AShooterNPC::DeferredDestruction, DeferredDestructionTime, false);
 }
 
 void AShooterNPC::DeferredDestruction()

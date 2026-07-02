@@ -11,10 +11,26 @@
 #include "ShooterBulletCounterUI.h"
 #include "BuildOrBust.h"
 #include "Widgets/Input/SVirtualJoystick.h"
+#include "Components/InputComponent.h"
+#include "Engine/Engine.h"
 
 void AShooterPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+
+#if !WITH_EDITOR
+	// 打包版（手机/独立进程）关闭引擎的全部屏幕警告消息：
+	// 隐藏左上角红色引擎警告（如 SkyAtmosphere 移动端提示），编辑器内保留便于调试。
+	// 注：这类渲染器警告走全局屏幕消息通道，必须用 DisableAllScreenMessages 才能关闭
+	if (IsLocalPlayerController())
+	{
+		ConsoleCommand(TEXT("DisableAllScreenMessages"));
+	}
+	if (GEngine)
+	{
+		GEngine->bEnableOnScreenDebugMessages = false;
+	}
+#endif
 
 	// only spawn touch controls on local player controllers
 	if (IsLocalPlayerController())
@@ -75,6 +91,14 @@ void AShooterPlayerController::SetupInputComponent()
 					Subsystem->AddMappingContext(CurrentContext, 0);
 				}
 			}
+		}
+
+		// 移动端：拖动右半屏幕转视角（不依赖 UMG 摇杆，避免摇杆失效导致无法瞄准）
+		if (InputComponent)
+		{
+			InputComponent->BindTouch(IE_Pressed, this, &AShooterPlayerController::OnTouchLookStarted);
+			InputComponent->BindTouch(IE_Repeat, this, &AShooterPlayerController::OnTouchLookMoved);
+			InputComponent->BindTouch(IE_Released, this, &AShooterPlayerController::OnTouchLookEnded);
 		}
 	}
 }
@@ -150,4 +174,53 @@ bool AShooterPlayerController::ShouldUseTouchControls() const
 {
 	// are we on a mobile platform? Should we force touch?
 	return SVirtualJoystick::ShouldDisplayTouchInterface() || bForceTouchControls;
+}
+
+void AShooterPlayerController::OnTouchLookStarted(ETouchIndex::Type FingerIndex, FVector Location)
+{
+	int32 VX = 0, VY = 0;
+	GetViewportSize(VX, VY);
+	// 右半屏按下即接管转视角（左半屏留给移动摇杆）。
+	// 每次按下都重置基准坐标：安卓偶发丢失"抬起"事件，若沿用旧坐标，
+	// 下次按下第一帧会算出巨大位移 → 镜头猛甩一下。按下即重置可根治。
+	if (VX > 0 && Location.X > VX * 0.5f)
+	{
+		LookFingerIndex = static_cast<int32>(FingerIndex);
+		LastLookPos = FVector2D(Location.X, Location.Y);
+	}
+}
+
+void AShooterPlayerController::OnTouchLookMoved(ETouchIndex::Type FingerIndex, FVector Location)
+{
+	if (static_cast<int32>(FingerIndex) != LookFingerIndex)
+	{
+		return;
+	}
+	const FVector2D Cur(Location.X, Location.Y);
+	FVector2D Delta = Cur - LastLookPos;
+
+	// 死区过滤：手指按住不动时触屏坐标有 ~1px 传感器噪声，若不过滤会让镜头/持枪每帧微抖
+	if (Delta.SizeSquared() < 2.0f)
+	{
+		return;   // 不更新 LastLookPos，避免噪声累积漂移
+	}
+	LastLookPos = Cur;
+
+	// 单次事件位移限幅：吞掉系统偶发的异常坐标跳变（双保险，防镜头猛甩）
+	Delta.X = FMath::Clamp(Delta.X, -60.0f, 60.0f);
+	Delta.Y = FMath::Clamp(Delta.Y, -60.0f, 60.0f);
+
+	// 拖动量换算成视角旋转：手指右移→视角右转，手指下移→视角向下（贴合直觉）
+	if (AShooterCharacter* C = Cast<AShooterCharacter>(GetPawn()))
+	{
+		C->DoAim(Delta.X * TouchLookSensitivity, Delta.Y * TouchLookSensitivity);
+	}
+}
+
+void AShooterPlayerController::OnTouchLookEnded(ETouchIndex::Type FingerIndex, FVector Location)
+{
+	if (static_cast<int32>(FingerIndex) == LookFingerIndex)
+	{
+		LookFingerIndex = -1;
+	}
 }

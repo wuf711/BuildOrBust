@@ -65,10 +65,9 @@ void UUpgradeComponent::ApplyUpgradeEffect(EUpgradeType Type)
 	case EUpgradeType::CoreReinforce:
 	{
 		// 守家：提升中央核心血量上限并立即修复
-		for (TActorIterator<ABaseCore> It(GetWorld()); It; ++It)
+		if (TActorIterator<ABaseCore> It(GetWorld()); It)
 		{
 			(*It)->AddMaxHPAndHeal(400.0f);
-			break;
 		}
 		break;
 	}
@@ -76,10 +75,9 @@ void UUpgradeComponent::ApplyUpgradeEffect(EUpgradeType Type)
 	case EUpgradeType::CoreShield:
 	{
 		// 守家：核心减伤 +20%（累加）
-		for (TActorIterator<ABaseCore> It(GetWorld()); It; ++It)
+		if (TActorIterator<ABaseCore> It(GetWorld()); It)
 		{
 			(*It)->AddBaseDamageReduction(0.20f);
-			break;
 		}
 		break;
 	}

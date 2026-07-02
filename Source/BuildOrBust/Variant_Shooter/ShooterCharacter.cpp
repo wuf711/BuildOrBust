@@ -12,6 +12,8 @@
 #include "Camera/CameraComponent.h"
 #include "TimerManager.h"
 #include "ShooterGameMode.h"
+#include "Kismet/GameplayStatics.h"
+#include "GameFramework/DamageType.h"
 
 AShooterCharacter::AShooterCharacter()
 {
@@ -162,51 +164,28 @@ void AShooterCharacter::DoJumpEnd()
 
 void AShooterCharacter::DoStartFiring()
 {
-	if (IsDead())
-	{
-		return;
-	}
-
-	// 本地立即开火：手感/视觉响应。客户端本地子弹不造成伤害（见 ShooterProjectile::ProcessHit）
-	if (CurrentWeapon)
-	{
-		CurrentWeapon->StartFiring();
-	}
-
-	// 客户端：通知服务器在权威端开火 → 命中/击杀/计分对所有玩家生效（修复 P2 击杀不记分）
-	if (!HasAuthority())
-	{
-		Server_StartFiring();
-	}
-}
-
-void AShooterCharacter::DoStopFiring()
-{
-	if (CurrentWeapon)
-	{
-		CurrentWeapon->StopFiring();
-	}
-
-	if (!HasAuthority())
-	{
-		Server_StopFiring();
-	}
-}
-
-void AShooterCharacter::Server_StartFiring_Implementation()
-{
-	// 在服务器权威端开火：生成造成伤害的子弹，击杀归属本玩家、正确计分
+	// 只在本地开火：客户端子弹命中后通过 Server_ReportHit 上报服务器结算（见 ShooterProjectile::ProcessHit）
 	if (CurrentWeapon && !IsDead())
 	{
 		CurrentWeapon->StartFiring();
 	}
 }
 
-void AShooterCharacter::Server_StopFiring_Implementation()
+void AShooterCharacter::DoStopFiring()
 {
-	if (CurrentWeapon)
+	if (CurrentWeapon && !IsDead())
 	{
 		CurrentWeapon->StopFiring();
+	}
+}
+
+void AShooterCharacter::Server_ReportHit_Implementation(AActor* HitActor, float Damage)
+{
+	// 客户端(P2)的子弹在本地判定命中，把命中目标上报服务器权威结算伤害。
+	// EventInstigator = 本玩家控制器 → 丧尸死亡时击杀归属本玩家、正确计分。
+	if (HitActor)
+	{
+		UGameplayStatics::ApplyDamage(HitActor, Damage, GetController(), this, UDamageType::StaticClass());
 	}
 }
 
@@ -260,8 +239,12 @@ void AShooterCharacter::PlayFiringMontage(UAnimMontage* Montage)
 
 void AShooterCharacter::AddWeaponRecoil(float Recoil)
 {
-	// apply the recoil as pitch input
-	AddControllerPitchInput(Recoil);
+	// 只在本地控制端施加后坐力：服务器为客户端(P2)权威开火时不再重复施加，
+	// 否则客户端会被"本地+服务器"双重后坐力来回拉扯，导致镜头/持枪剧烈抖动、打不准
+	if (IsLocallyControlled())
+	{
+		AddControllerPitchInput(Recoil);
+	}
 }
 
 void AShooterCharacter::UpdateWeaponHUD(int32 CurrentAmmo, int32 MagazineSize)

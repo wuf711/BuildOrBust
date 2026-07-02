@@ -26,6 +26,8 @@ AShooterWeapon::AShooterWeapon()
 	FirstPersonMesh->SetCollisionProfileName(FName("NoCollision"));
 	FirstPersonMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
 	FirstPersonMesh->bOnlyOwnerSee = true;
+	// 始终评估姿势：第一人称武器在客户端(P2)若按"是否被渲染"判定跳变会导致持枪抖动，强制每帧刷新
+	FirstPersonMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 
 	// create the third person mesh
 	ThirdPersonMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Third Person Mesh"));

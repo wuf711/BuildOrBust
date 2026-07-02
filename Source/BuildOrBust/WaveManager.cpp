@@ -21,6 +21,7 @@
 AWaveManager::AWaveManager()
 {
 	bReplicates = true;
+	bAlwaysRelevant = true;   // 确保 CurrentWave 复制到所有客户端，否则 P2 端一直显示第 0 波
 	PrimaryActorTick.bCanEverTick = false;
 }
 
@@ -116,10 +117,9 @@ void AWaveManager::OnWaveCleared()
 	}
 
 	// ① 中央核心自动升级并回满（守家自动化：基地不再是玩家增益的投入对象，玩家增益专注战斗/PVP）
-	for (TActorIterator<ABaseCore> It(GetWorld()); It; ++It)
+	if (TActorIterator<ABaseCore> It(GetWorld()); It)
 	{
 		It->AutoUpgradeAndHeal();
-		break;
 	}
 
 	// ② 波间空档（无敌人）给全体玩家同时发一次三选一增益，避免战斗中选卡卡顿
