@@ -101,6 +101,9 @@ protected:
 	/** Set up input action bindings */
 	virtual void SetupPlayerInputComponent(UInputComponent* InputComponent) override;
 
+	/** 复制属性（连击状态） */
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
 public:
 
 	/** Handle incoming damage */
@@ -223,9 +226,13 @@ protected:
 	/** 累计伤害减免百分比 */
 	float DamageReductionPct = 0.0f;
 
-	/** 连击数与倍率 */
+	/** 连击数与倍率（服务器权威更新，复制到客户端供 HUD 显示连击状态） */
+	UPROPERTY(Replicated)
 	int32 ComboCount = 0;
+
+	UPROPERTY(Replicated)
 	float ComboMultiplier = 1.0f;
+
 	FTimerHandle ComboResetTimer;
 
 	/** 断击重置连击 */

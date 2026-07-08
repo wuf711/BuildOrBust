@@ -28,3 +28,6 @@ Thumbs.db
 .claude/
 .mcp.json
 HANDOFF_*.md
+
+# ===== 优化迭代工作文档（本地工作文件，不进交付仓库）=====
+优化文档*

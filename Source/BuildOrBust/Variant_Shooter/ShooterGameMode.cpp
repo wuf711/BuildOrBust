@@ -21,9 +21,10 @@ void AShooterGameMode::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// create the UI
-	ShooterUI = CreateWidget<UShooterUI>(UGameplayStatics::GetPlayerController(GetWorld(), 0), ShooterUIClass);
-	ShooterUI->AddToViewport(0);
+	// 不再创建顶部中间的模板团队分（与右上 P1/P2 计分板重复且含义不明）。
+	// 下方所有使用处均有 if (ShooterUI) 判空，留空安全；如需恢复，还原这两行即可：
+	// ShooterUI = CreateWidget<UShooterUI>(UGameplayStatics::GetPlayerController(GetWorld(), 0), ShooterUIClass);
+	// ShooterUI->AddToViewport(0);
 }
 
 void AShooterGameMode::IncrementTeamScore(uint8 TeamByte)

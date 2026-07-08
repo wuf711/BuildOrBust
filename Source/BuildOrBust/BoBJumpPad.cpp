@@ -2,25 +2,27 @@
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/Character.h"
+#include "Materials/MaterialInterface.h"
 
 ABoBJumpPad::ABoBJumpPad()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
 
-	// 触发盒作为根，略高于地面，玩家走入即弹
+	// Trigger box as root, slightly above the floor; player entering it gets launched
 	Trigger = CreateDefaultSubobject<UBoxComponent>(TEXT("Trigger"));
 	SetRootComponent(Trigger);
 	Trigger->SetBoxExtent(FVector(90.0f, 90.0f, 60.0f));
 	Trigger->SetCollisionProfileName(TEXT("OverlapAllDynamic"));
 	Trigger->SetGenerateOverlapEvents(true);
 
-	// 视觉网格：扁平台。开启碰撞防穿模：玩家可踩上台面（20cm 可自动迈上），
-	// 丧尸不会再从台身穿过——台面参与动态导航，丧尸寻路时自动绕行
+	// Visual mesh: flat glowing disc (teleport-pad look). No solid collision, so any
+	// unit can walk across it; only the trigger box launches players. Zombies use
+	// direct-steering movement and don't need the pad to block or affect navigation.
 	PadMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PadMesh"));
 	PadMesh->SetupAttachment(Trigger);
-	PadMesh->SetCollisionProfileName(TEXT("BlockAll"));
-	PadMesh->SetCanEverAffectNavigation(true);
+	PadMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	PadMesh->SetCanEverAffectNavigation(false);
 }
 
 void ABoBJumpPad::BeginPlay()
@@ -28,6 +30,22 @@ void ABoBJumpPad::BeginPlay()
 	Super::BeginPlay();
 
 	Trigger->OnComponentBeginOverlap.AddDynamic(this, &ABoBJumpPad::OnTriggerBeginOverlap);
+
+	// Force the "teleport pad" look at runtime: no collision, flattened to the floor,
+	// glowing material. All applied at runtime so it never depends on per-instance
+	// serialized values (the project's #1 gremlin) - consistent in PIE and packaged.
+	if (PadMesh)
+	{
+		PadMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		PadMesh->SetCanEverAffectNavigation(false);
+		const FVector S = PadMesh->GetRelativeScale3D();
+		PadMesh->SetRelativeScale3D(FVector(S.X, S.Y, 0.05f));
+		if (UMaterialInterface* Glow = LoadObject<UMaterialInterface>(nullptr,
+			TEXT("/Game/Variant_Shooter/Skins/M_BoBPadGlow.M_BoBPadGlow")))
+		{
+			PadMesh->SetMaterial(0, Glow);
+		}
+	}
 }
 
 void ABoBJumpPad::OnTriggerBeginOverlap(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
@@ -39,13 +57,13 @@ void ABoBJumpPad::OnTriggerBeginOverlap(UPrimitiveComponent* OverlappedComp, AAc
 		return;
 	}
 
-	// 只弹玩家：丧尸由 AI 控制器操控，IsPlayerControlled() 为假 → 不受弹跳台影响
+	// Only launch players: zombies are AI-controlled, IsPlayerControlled() is false -> ignored
 	if (!Char->IsPlayerControlled())
 	{
 		return;
 	}
 
-	// 由服务器权威发起弹射，LaunchCharacter 的速度会复制到客户端（监听服务器双人都生效）
+	// Launch on the server; LaunchCharacter velocity replicates to clients (listen-server 2P)
 	if (!HasAuthority())
 	{
 		return;
@@ -58,6 +76,6 @@ void ABoBJumpPad::OnTriggerBeginOverlap(UPrimitiveComponent* OverlappedComp, AAc
 		LaunchVel += GetActorForwardVector() * LaunchForwardSpeed;
 	}
 
-	// 垂直弹射保留水平动量(XYOverride=false)；含前冲分量时覆盖水平速度
+	// Vertical launch keeps horizontal momentum (XYOverride=false); override XY when a forward push is set
 	Char->LaunchCharacter(LaunchVel, bHorizontal, true);
 }

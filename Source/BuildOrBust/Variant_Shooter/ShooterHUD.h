@@ -18,4 +18,26 @@ class BUILDORBUST_API AShooterHUD : public AHUD
 
 public:
 	virtual void DrawHUD() override;
+
+private:
+	//~ 战斗反馈状态（每个 HUD 实例各自维护；不能用 static，单进程双窗口会互串）
+
+	/** 上次看到的波次，用于检测新波开始 */
+	int32 LastSeenWave = -1;
+
+	/** 波次开场横幅显示截止时间（世界秒） */
+	float WaveBannerUntil = 0.0f;
+
+	/** 上次看到的核心血量，用于检测核心受击 */
+	float LastSeenCoreHP = -1.0f;
+
+	/** 核心受击警示显示截止时间（世界秒） */
+	float CoreAlertUntil = 0.0f;
+
+	/** 上次看到的本机玩家得分，用于检测得分增长（击杀飘分） */
+	float LastSeenMyScore = -1.0f;
+
+	/** 飘分显示截止时间（世界秒）与本次增量 */
+	float ScorePopupUntil = 0.0f;
+	int32 ScorePopupAmount = 0;
 };

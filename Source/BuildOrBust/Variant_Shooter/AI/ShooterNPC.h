@@ -49,6 +49,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Melee")
 	float AttackInterval = 1.2f;
 
+	/** 啃食核心的触发距离（到核心中心的水平距离；核心水晶表面~420，贴上才啃） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Melee")
+	float CoreAttackRange = 500.0f;
+
+	/** 啃食核心的每秒伤害（每只丧尸；主动攻击模型，替代旧的核心侧重叠检测） */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Melee")
+	float CoreGnawDPS = 5.0f;
+
 	//~ 种类特殊能力（在各 BP 变体的 Class Defaults 里勾选开启）
 
 	/** 疾跑：周期性短时提速冲刺（适合快攻型） */

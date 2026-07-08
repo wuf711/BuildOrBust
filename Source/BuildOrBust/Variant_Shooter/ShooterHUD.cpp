@@ -2,6 +2,7 @@
 
 #include "Variant_Shooter/ShooterHUD.h"
 #include "Variant_Shooter/ShooterGameState.h"
+#include "Variant_Shooter/ShooterCharacter.h"
 #include "WaveManager.h"
 #include "BaseCore.h"
 #include "EngineUtils.h"
@@ -9,6 +10,8 @@
 #include "GameFramework/PlayerController.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 
 void AShooterHUD::DrawHUD()
 {
@@ -128,14 +131,33 @@ void AShooterHUD::DrawHUD()
 
 	if (TActorIterator<AWaveManager> It(World); It)
 	{
+		const int32 CurWave = It->GetCurrentWave();
+		// 新一波开始 → 屏幕中央弹 3 秒开场横幅（CurrentWave 已复制，客户端同样生效）
+		if (CurWave > LastSeenWave)
+		{
+			if (CurWave >= 1)
+			{
+				WaveBannerUntil = World->GetTimeSeconds() + 3.0f;
+			}
+			LastSeenWave = CurWave;
+		}
+
 		DrawLeft(FString::Printf(TEXT("第 %d / %d 波      剩余敌人：%d"),
-			It->GetCurrentWave(), It->MaxWave, It->GetAliveEnemyCount()),
+			CurWave, It->MaxWave, It->GetAliveEnemyCount()),
 			FLinearColor(1.0f, 0.6f, 0.1f));
 	}
 
 	if (TActorIterator<ABaseCore> It(World); It)
 	{
-		DrawLeft(FString::Printf(TEXT("核心血量：%.0f / %.0f"), It->GetBaseHP(), It->MaxBaseHP),
+		const float CoreHP = It->GetBaseHP();
+		// 核心掉血 → 中央弹 1.5 秒受击警示（CurrentBaseHP 已复制，客户端同样生效）
+		if (LastSeenCoreHP >= 0.0f && CoreHP < LastSeenCoreHP - 0.1f)
+		{
+			CoreAlertUntil = World->GetTimeSeconds() + 1.5f;
+		}
+		LastSeenCoreHP = CoreHP;
+
+		DrawLeft(FString::Printf(TEXT("核心血量：%.0f / %.0f"), CoreHP, It->MaxBaseHP),
 			FLinearColor(1.0f, 0.3f, 0.3f));
 	}
 
@@ -168,9 +190,87 @@ void AShooterHUD::DrawHUD()
 				FMath::RoundToInt(Players[i]->GetScore())),
 				bSelf ? FLinearColor(0.3f, 1.0f, 0.4f) : FLinearColor(1.0f, 0.85f, 0.85f));
 		}
-		if (Players.Num() < 2)
+		// 单机（手机/独立进程）不可能有人加入，不显示等待提示，减少界面噪音
+		if (Players.Num() < 2 && World->GetNetMode() != NM_Standalone)
 		{
 			DrawRight(TEXT("（等待玩家加入…）"), FLinearColor(0.6f, 0.6f, 0.6f));
+		}
+	}
+
+	// ===== 中央战斗反馈：波次开场横幅 / 核心受击警示 =====
+	// 文案只用离线字体已烘字符（"来袭/受到/警告"等字未烘，重烘字体后可换）
+	const float Now = World->GetTimeSeconds();
+	auto DrawCentered = [&](const FString& Text, const FLinearColor& Color, float Y, float Scale)
+	{
+		float XL = 0.0f, YL = 0.0f;
+		Canvas->TextSize(Font, Text, XL, YL, Scale, Scale);
+		const float X = (ScreenW - XL) * 0.5f;
+		DrawText(Text, FLinearColor(0.0f, 0.0f, 0.0f, 0.9f), X + 2.5f, Y + 2.5f, Font, Scale);
+		DrawText(Text, Color, X, Y, Font, Scale);
+	};
+
+	if (Now < WaveBannerUntil && LastSeenWave >= 1)
+	{
+		DrawCentered(FString::Printf(TEXT("—— 第 %d 波来袭 ——"), LastSeenWave),
+			FLinearColor(1.0f, 0.75f, 0.1f), 170.0f, 1.5f);
+	}
+	if (Now < CoreAlertUntil)
+	{
+		DrawCentered(TEXT("！核心受到攻击！"), FLinearColor(1.0f, 0.25f, 0.2f), 235.0f, 1.2f);
+	}
+
+	// 连击提示：连续击杀时在画面下方显示（ComboCount/Multiplier 已复制，双端生效）
+	if (const AShooterCharacter* MyChar = PC ? Cast<AShooterCharacter>(PC->GetPawn()) : nullptr)
+	{
+		const int32 Combo = MyChar->GetComboCount();
+		if (Combo >= 2)
+		{
+			const int32 BonusPct = FMath::RoundToInt((MyChar->GetComboMultiplier() - 1.0f) * 100.0f);
+			DrawCentered(FString::Printf(TEXT("连击 ×%d（伤害 +%d%%）"), Combo, BonusPct),
+				FLinearColor(1.0f, 0.55f, 0.1f), Canvas->SizeY * 0.76f, 1.1f);
+		}
+	}
+
+	// 击杀飘分：本机得分增长瞬间，准星下方上浮显示「+N 分」（分数走 PlayerState 复制，双端生效）
+	if (Me)
+	{
+		const float MyScore = Me->GetScore();
+		if (LastSeenMyScore >= 0.0f && MyScore > LastSeenMyScore + 0.1f)
+		{
+			ScorePopupAmount = FMath::RoundToInt(MyScore - LastSeenMyScore);
+			ScorePopupUntil = Now + 1.0f;
+
+			// 击杀确认音：复用模板枪声，调高音调压低音量作"确认滴答"（仅本机 2D 播放）
+			static USoundBase* KillSound = LoadObject<USoundBase>(nullptr,
+				TEXT("/Game/Weapons/GrenadeLauncher/Audio/FirstPersonTemplateWeaponFire02.FirstPersonTemplateWeaponFire02"));
+			if (KillSound)
+			{
+				UGameplayStatics::PlaySound2D(World, KillSound, 0.5f, 1.8f);
+			}
+		}
+		LastSeenMyScore = MyScore;
+	}
+	if (Now < ScorePopupUntil && ScorePopupAmount > 0)
+	{
+		// 剩余时间越少位置越高 → 轻微上浮动画
+		const float T = FMath::Clamp(ScorePopupUntil - Now, 0.0f, 1.0f);
+		const float Y = Canvas->SizeY * 0.5f + 70.0f - (1.0f - T) * 40.0f;
+		DrawCentered(FString::Printf(TEXT("+%d 分"), ScorePopupAmount),
+			FLinearColor(0.4f, 1.0f, 0.45f), Y, 1.0f);
+	}
+
+	// 击杀确认标记：击杀后 0.25 秒内，准星四周闪出 X 形短线（复用飘分计时，不加新状态）
+	if (Now < ScorePopupUntil - 0.75f)
+	{
+		const float CX = ScreenW * 0.5f;
+		const float CY = Canvas->SizeY * 0.5f;
+		const FLinearColor MarkColor(1.0f, 0.9f, 0.3f);
+		for (int32 SX = -1; SX <= 1; SX += 2)
+		{
+			for (int32 SY = -1; SY <= 1; SY += 2)
+			{
+				DrawLine(CX + SX * 8.0f, CY + SY * 8.0f, CX + SX * 18.0f, CY + SY * 18.0f, MarkColor, 2.0f);
+			}
 		}
 	}
 }

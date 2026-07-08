@@ -20,6 +20,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/DamageType.h"
 #include "Net/UnrealNetwork.h"
+#include "DrawDebugHelpers.h"
 
 AShooterNPC::AShooterNPC()
 {
@@ -44,6 +45,9 @@ void AShooterNPC::BeginPlay()
 	if (UCharacterMovementComponent* Move = GetCharacterMovement())
 	{
 		BaseWalkSpeed = Move->MaxWalkSpeed;
+
+		// 群体避让（RVO）：直线转向移动模型下防止丧尸互相顶住卡死
+		Move->SetAvoidanceEnabled(true);
 	}
 	MaxHP = CurrentHP;
 
@@ -104,6 +108,19 @@ void AShooterNPC::MeleeAttackTick()
 	if (bIsDead)
 	{
 		return;
+	}
+
+	// 啃食核心（服务器权威）：贴近核心即按 DPS 咬——主动攻击模型，
+	// 不再依赖核心侧 DamageZone 重叠检测（其半径被蓝图实例旧序列化值污染是历史病根）
+	if (HasAuthority())
+	{
+		if (ABaseCore* Core = Cast<ABaseCore>(UGameplayStatics::GetActorOfClass(GetWorld(), ABaseCore::StaticClass())))
+		{
+			if (FVector::Dist2D(GetActorLocation(), Core->GetActorLocation()) <= CoreAttackRange)
+			{
+				Core->DamageCore(CoreGnawDPS * AttackInterval);
+			}
+		}
 	}
 
 	// 找最近的玩家

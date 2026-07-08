@@ -75,13 +75,20 @@ void ABaseCore::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// 啃食判定圈：蓝图实例序列化的旧半径(420)会压过 C++ 默认值，而丧尸被核心碰撞球
+	// 挡停在中心距 ~420-484 处，恰好整段卡在圈外啃不到。运行时强制扩到 520，
+	// 覆盖任何旧序列化值（不依赖逐实例属性持久化，打包/PIE 一致生效）
+	if (DamageZone)
+	{
+		DamageZone->SetSphereRadius(520.0f);
+	}
+
 	CurrentBaseHP = MaxBaseHP;
 
-	if (HasAuthority())
-	{
-		GetWorld()->GetTimerManager().SetTimer(
-			DamageTimer, this, &ABaseCore::DamageTick, DamageInterval, true);
-	}
+	// 旧的重叠检测啃食（DamageTick 定时器）已停用：
+	// 核心伤害改由丧尸主动啃食驱动（ShooterNPC::MeleeAttackTick，贴近即咬），
+	// 避免 DamageZone 半径被蓝图实例旧序列化值污染导致"围而不咬"。
+	// DamageTick 函数保留备用，如需恢复旧模型还原此处定时器即可。
 }
 
 void ABaseCore::DamageTick()
