@@ -3,6 +3,7 @@
 
 #include "ShooterProjectile.h"
 #include "Components/SphereComponent.h"
+#include "Components/PointLightComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "GameFramework/Character.h"
 #include "Variant_Shooter/ShooterCharacter.h"
@@ -25,6 +26,14 @@ AShooterProjectile::AShooterProjectile()
 	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	CollisionComponent->SetCollisionResponseToAllChannels(ECR_Block);
 	CollisionComponent->CanCharacterStepUpOn = ECanBeCharacterBase::ECB_No;
+
+	// 曳光点光：飞行时低亮度青白曳光，命中瞬间飙升为爆闪
+	TracerLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("TracerLight"));
+	TracerLight->SetupAttachment(CollisionComponent);
+	TracerLight->SetIntensity(600.0f);
+	TracerLight->SetLightColor(FLinearColor(0.55f, 0.85f, 1.0f));
+	TracerLight->SetAttenuationRadius(240.0f);
+	TracerLight->SetCastShadows(false);
 
 	// create the projectile movement component. No need to attach it because it's not a Scene Component
 	ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("Projectile Movement"));
@@ -85,6 +94,13 @@ void AShooterProjectile::NotifyHit(class UPrimitiveComponent* MyComp, AActor* Ot
 	// pass control to BP for any extra effects
 	BP_OnProjectileHit(Hit);
 
+	// 命中爆闪：曳光灯强度飙升一瞬（销毁前的 50ms 内可见）
+	if (TracerLight)
+	{
+		TracerLight->SetIntensity(3000.0f);
+		TracerLight->SetAttenuationRadius(260.0f);
+	}
+
 	// check if we should schedule deferred destruction of the projectile
 	if (DeferredDestructionTime > 0.0f)
 	{
@@ -92,8 +108,8 @@ void AShooterProjectile::NotifyHit(class UPrimitiveComponent* MyComp, AActor* Ot
 
 	} else {
 
-		// destroy the projectile right away
-		Destroy();
+		// 留 50ms 让命中爆闪可见，再销毁（原为立即销毁）
+		GetWorld()->GetTimerManager().SetTimer(DestructionTimer, this, &AShooterProjectile::OnDeferredDestruction, 0.05f, false);
 	}
 }
 

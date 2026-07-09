@@ -21,6 +21,9 @@
 #include "GameFramework/DamageType.h"
 #include "Net/UnrealNetwork.h"
 #include "DrawDebugHelpers.h"
+#include "Animation/AnimSequence.h"
+#include "Engine/SkeletalMesh.h"
+#include "Materials/MaterialInterface.h"
 
 AShooterNPC::AShooterNPC()
 {
@@ -54,6 +57,11 @@ void AShooterNPC::BeginPlay()
 	// 丧尸是近战，不生成武器。启动近战攻击轮询。
 	GetWorld()->GetTimerManager().SetTimer(
 		MeleeTimer, this, &AShooterNPC::MeleeAttackTick, AttackInterval, true);
+
+	// 丧尸动画：载入动画包并启动步态轮询（各端本地驱动，速度来自复制的移动状态）
+	SetupZombieAnims();
+	GetWorld()->GetTimerManager().SetTimer(
+		AnimTimer, this, &AShooterNPC::UpdateLocomotionAnim, 0.12f, true);
 
 	// 种类特殊能力：仅服务器驱动（速度/自回血/对核心伤害都需权威化）
 	if (HasAuthority())
@@ -110,8 +118,8 @@ void AShooterNPC::MeleeAttackTick()
 		return;
 	}
 
-	// 啃食核心（服务器权威）：贴近核心即按 DPS 咬——主动攻击模型，
-	// 不再依赖核心侧 DamageZone 重叠检测（其半径被蓝图实例旧序列化值污染是历史病根）
+	// 啃食核心：贴近即咬（动画由步态轮询的循环撕咬状态负责；这里只做服务器权威伤害结算）
+	// （不依赖核心侧 DamageZone 重叠检测——其半径被蓝图实例旧序列化值污染是历史病根）
 	if (HasAuthority())
 	{
 		if (ABaseCore* Core = Cast<ABaseCore>(UGameplayStatics::GetActorOfClass(GetWorld(), ABaseCore::StaticClass())))
@@ -147,11 +155,139 @@ void AShooterNPC::MeleeAttackTick()
 		return;
 	}
 
-	// 在近战范围内 → 造成伤害
+	// 在近战范围内 → 挥爪 + 造成伤害（正在循环撕咬核心时不打断循环）
 	if (FMath::Sqrt(BestDistSq) <= MeleeRange)
 	{
+		if (LocoState != 4)
+		{
+			PlayAttackAnim();
+		}
 		UGameplayStatics::ApplyDamage(Target, MeleeDamage, GetController(), this, UDamageType::StaticClass());
 	}
+}
+
+void AShooterNPC::SetupZombieAnims()
+{
+	const FString Base = TEXT("/Game/ZombieAnimationPack/Animations/Mannequin_UE5/");
+	auto LoadAnim = [&Base](const TCHAR* Name) -> UAnimSequence*
+	{
+		const FString Path = Base + Name + TEXT(".") + Name;
+		return LoadObject<UAnimSequence>(nullptr, *Path);
+	};
+
+	IdleAnim = LoadAnim(TEXT("anim_Idle_A"));
+	RunAnim  = LoadAnim(TEXT("anim_Run_A"));
+
+	// 走路三选一：按实例 ID 固定挑选，让尸潮步态自带差异
+	static const TCHAR* Walks[3] = { TEXT("anim_Walk_A"), TEXT("anim_Walk_B"), TEXT("anim_Walk_C") };
+	WalkAnim = LoadAnim(Walks[GetUniqueID() % 3]);
+
+	AttackAnims.Reset();
+	// 只用站立攻击 A/B——C/D 是对地面受害者的俯身攻击（包主题是医院/病床），站着咬核心会像摔倒
+	static const TCHAR* Attacks[2] = { TEXT("anim_Attack_A"), TEXT("anim_Attack_B") };
+	for (const TCHAR* Name : Attacks)
+	{
+		if (UAnimSequence* A = LoadAnim(Name))
+		{
+			// 强制锁根骨：攻击段的"前扑位移"烘在根骨上，单节点播放会导致
+			// 网格扑出胶囊（穿模）→ 循环回卷瞬移回来。锁根后变为原地上身前扑
+			A->bForceRootLock = true;
+			AttackAnims.Add(A);
+		}
+	}
+
+	// 骨架适配：动画包用自带的 SKEL_Mannequin 副本，与工程 SK_Mannequin 不是同一资产。
+	// 骨架不合时把网格换成包内同款 UE5 人偶（视觉一致），并原样保留彩色材质（种类辨识度）
+	USkeletalMeshComponent* M = GetMesh();
+	USkeletalMesh* Cur = M ? M->GetSkeletalMeshAsset() : nullptr;
+	if (WalkAnim && Cur && WalkAnim->GetSkeleton() != Cur->GetSkeleton())
+	{
+		if (USkeletalMesh* PackMesh = LoadObject<USkeletalMesh>(nullptr,
+			TEXT("/Game/ZombieAnimationPack/Demo/EpicContent/Mannequin_UE5/Meshes/SK_Manny_Simple.SK_Manny_Simple")))
+		{
+			TArray<UMaterialInterface*> OldMats;
+			for (int32 i = 0; i < M->GetNumMaterials(); ++i)
+			{
+				OldMats.Add(M->GetMaterial(i));
+			}
+
+			M->SetSkeletalMesh(PackMesh);
+
+			for (int32 i = 0; i < M->GetNumMaterials(); ++i)
+			{
+				UMaterialInterface* Mat = OldMats.IsValidIndex(i) ? OldMats[i] : (OldMats.Num() > 0 ? OldMats[0] : nullptr);
+				if (Mat)
+				{
+					M->SetMaterial(i, Mat);
+				}
+			}
+		}
+	}
+}
+
+void AShooterNPC::UpdateLocomotionAnim()
+{
+	if (bIsDead || !GetMesh())
+	{
+		return;
+	}
+
+	// 攻击动画独占期内不切步态
+	if (GetWorld()->GetTimeSeconds() < AttackAnimUntil)
+	{
+		return;
+	}
+
+	// 贴身啃核心：循环播放固定攻击动画（LocoState=4）。循环内无重启 → 撕咬平滑不卡帧；
+	// 每只按实例 ID 固定选一段，尸群动作仍有差异
+	if (ABaseCore* Core = Cast<ABaseCore>(UGameplayStatics::GetActorOfClass(GetWorld(), ABaseCore::StaticClass())))
+	{
+		if (FVector::Dist2D(GetActorLocation(), Core->GetActorLocation()) <= CoreAttackRange)
+		{
+			if (LocoState != 4 && AttackAnims.Num() > 0)
+			{
+				if (UAnimSequence* Anim = AttackAnims[GetUniqueID() % AttackAnims.Num()])
+				{
+					GetMesh()->PlayAnimation(Anim, true);
+					LocoState = 4;
+				}
+			}
+			return;
+		}
+	}
+
+	const float Speed = GetVelocity().Size2D();
+	const uint8 NewState = Speed > 260.0f ? 3 : (Speed > 20.0f ? 2 : 1);
+	if (NewState == LocoState)
+	{
+		return;
+	}
+	LocoState = NewState;
+
+	UAnimSequence* Anim = (NewState == 3) ? RunAnim : (NewState == 2 ? WalkAnim : IdleAnim);
+	if (Anim)
+	{
+		GetMesh()->PlayAnimation(Anim, true);
+	}
+}
+
+void AShooterNPC::PlayAttackAnim()
+{
+	const float Now = GetWorld()->GetTimeSeconds();
+	if (Now < AttackAnimUntil || AttackAnims.Num() == 0 || bIsDead || !GetMesh())
+	{
+		return;
+	}
+
+	UAnimSequence* Anim = AttackAnims[FMath::RandRange(0, AttackAnims.Num() - 1)];
+	if (!Anim)
+	{
+		return;
+	}
+
+	GetMesh()->PlayAnimation(Anim, false);
+	AttackAnimUntil = Now + FMath::Min(Anim->GetPlayLength(), 1.4f);
+	LocoState = 0;   // 攻击结束后强制重评步态
 }
 
 float AShooterNPC::TakeDamage(float Damage, struct FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser)

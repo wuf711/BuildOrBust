@@ -8,6 +8,7 @@ class UBoxComponent;
 class UStaticMeshComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
+class UNiagaraComponent;
 
 /**
  *  弹跳台：玩家踩上去被向上弹射，可借此跳上掩体顶、构造更立体好玩的地形。
@@ -61,6 +62,10 @@ protected:
 	/** 运行时创建的动态材质实例（每个插槽一个） */
 	UPROPERTY(Transient)
 	TArray<UMaterialInstanceDynamic*> DynamicMaterials;
+
+	/** 台面环境粒子（复用模板 NS_JumpPad，运行时挂载；起跳时重触发一次爆发） */
+	UPROPERTY(Transient)
+	UNiagaraComponent* PadFX = nullptr;
 
 	virtual void BeginPlay() override;
 

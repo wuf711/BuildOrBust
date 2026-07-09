@@ -11,6 +11,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FPawnDeathDelegate);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FPawnDeathWithKillerDelegate, AController*, Killer, int32, ScoreValue);
 
 class AShooterWeapon;
+class UAnimSequence;
 
 /**
  *  A simple AI-controlled shooter game NPC
@@ -171,6 +172,32 @@ protected:
 	//~ 近战攻击
 	FTimerHandle MeleeTimer;
 	void MeleeAttackTick();
+
+	//~ 丧尸动画驱动（C++ 单节点播放 ZombieAnimationPack 动画，不依赖动画蓝图）
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> IdleAnim;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> WalkAnim;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> RunAnim;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UAnimSequence>> AttackAnims;
+
+	FTimerHandle AnimTimer;        // 步态轮询定时器
+	float AttackAnimUntil = 0.0f;  // 攻击动画独占截止（期间不切步态）
+	uint8 LocoState = 0;           // 0=未定 1=待机 2=走 3=跑
+
+	/** 载入动画包；若骨架与当前网格不合，换成包内同款 UE5 人偶并保留配色 */
+	void SetupZombieAnims();
+
+	/** 按速度切换 待机/走/跑 循环动画 */
+	void UpdateLocomotionAnim();
+
+	/** 播放一次随机攻击动画（各端本地播放） */
+	void PlayAttackAnim();
 
 	//~ 种类特殊能力的定时器与处理
 	FTimerHandle SprintTimer;       // 周期触发疾跑

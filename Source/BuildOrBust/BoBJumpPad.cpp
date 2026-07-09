@@ -3,6 +3,9 @@
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/Character.h"
 #include "Materials/MaterialInterface.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 
 ABoBJumpPad::ABoBJumpPad()
 {
@@ -46,6 +49,16 @@ void ABoBJumpPad::BeginPlay()
 			PadMesh->SetMaterial(0, Glow);
 		}
 	}
+
+	// Ambient particles above the pad, reusing the template's NS_JumpPad system.
+	// Attached at runtime (no per-instance serialization involved).
+	if (UNiagaraSystem* FX = LoadObject<UNiagaraSystem>(nullptr,
+		TEXT("/Game/LevelPrototyping/Interactable/JumpPad/Assets/NS_JumpPad.NS_JumpPad")))
+	{
+		PadFX = UNiagaraFunctionLibrary::SpawnSystemAttached(
+			FX, Trigger, NAME_None, FVector(0.0f, 0.0f, 10.0f), FRotator::ZeroRotator,
+			EAttachLocation::KeepRelativeOffset, false);
+	}
 }
 
 void ABoBJumpPad::OnTriggerBeginOverlap(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
@@ -78,4 +91,10 @@ void ABoBJumpPad::OnTriggerBeginOverlap(UPrimitiveComponent* OverlappedComp, AAc
 
 	// Vertical launch keeps horizontal momentum (XYOverride=false); override XY when a forward push is set
 	Char->LaunchCharacter(LaunchVel, bHorizontal, true);
+
+	// Launch feedback: re-trigger the pad particles as a burst
+	if (PadFX)
+	{
+		PadFX->Activate(true);
+	}
 }

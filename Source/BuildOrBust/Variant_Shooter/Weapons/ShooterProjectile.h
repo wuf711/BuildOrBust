@@ -27,6 +27,10 @@ class BUILDORBUST_API AShooterProjectile : public AActor
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	UProjectileMovementComponent* ProjectileMovement;
 
+	/** 曳光：子弹自带青白点光，飞行时是曳光弹，命中瞬间强度飙升变成命中爆闪 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	class UPointLightComponent* TracerLight;
+
 protected:
 
 	/** Loudness of the AI perception noise done by this projectile on hit */

@@ -94,6 +94,13 @@ protected:
 	/** Timer to handle full auto refiring */
 	FTimerHandle RefireTimer;
 
+	/** 枪口闪光：开火瞬间点亮 ~50ms 的暖色点光（风格化世界用光代替火焰贴图） */
+	UPROPERTY(Transient)
+	class UPointLightComponent* MuzzleLight = nullptr;
+
+	/** 枪口闪光熄灭定时器 */
+	FTimerHandle MuzzleFlashTimer;
+
 	/** Cast pawn pointer to the owner for AI perception system interactions */
 	TObjectPtr<APawn> PawnOwner;
 

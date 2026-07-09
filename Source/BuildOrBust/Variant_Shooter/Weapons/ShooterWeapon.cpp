@@ -10,6 +10,7 @@
 #include "TimerManager.h"
 #include "Animation/AnimInstance.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/PointLightComponent.h"
 #include "GameFramework/Pawn.h"
 
 AShooterWeapon::AShooterWeapon()
@@ -36,6 +37,14 @@ AShooterWeapon::AShooterWeapon()
 	ThirdPersonMesh->SetCollisionProfileName(FName("NoCollision"));
 	ThirdPersonMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::WorldSpaceRepresentation);
 	ThirdPersonMesh->bOwnerNoSee = true;
+
+	// 枪口闪光点光：常灭，开火瞬间点亮 ~50ms（附着到第一人称网格的枪口插槽）
+	MuzzleLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("MuzzleLight"));
+	MuzzleLight->SetupAttachment(FirstPersonMesh, MuzzleSocketName);
+	MuzzleLight->SetIntensity(0.0f);
+	MuzzleLight->SetLightColor(FLinearColor(1.0f, 0.72f, 0.35f));
+	MuzzleLight->SetAttenuationRadius(320.0f);
+	MuzzleLight->SetCastShadows(false);
 }
 
 void AShooterWeapon::BeginPlay()
@@ -54,6 +63,13 @@ void AShooterWeapon::BeginPlay()
 
 	// attach the meshes to the owner
 	WeaponOwner->AttachWeaponMeshes(this);
+
+	// 构造期拿不到蓝图序列化的插槽名，这里用真实 MuzzleSocketName 重新贴到枪口
+	if (MuzzleLight)
+	{
+		MuzzleLight->AttachToComponent(FirstPersonMesh,
+			FAttachmentTransformRules::SnapToTargetNotIncludingScale, MuzzleSocketName);
+	}
 }
 
 void AShooterWeapon::EndPlay(EEndPlayReason::Type EndPlayReason)
@@ -177,6 +193,19 @@ void AShooterWeapon::FireProjectile(const FVector& TargetLocation)
 
 	// play the firing montage
 	WeaponOwner->PlayFiringMontage(FiringMontage);
+
+	// 枪口闪光：点亮 ~35ms 暖光（连发时定时器自动顺延，形成频闪）
+	if (MuzzleLight)
+	{
+		MuzzleLight->SetIntensity(2500.0f);
+		GetWorld()->GetTimerManager().SetTimer(MuzzleFlashTimer, [this]()
+		{
+			if (MuzzleLight)
+			{
+				MuzzleLight->SetIntensity(0.0f);
+			}
+		}, 0.035f, false);
+	}
 
 	// add recoil
 	WeaponOwner->AddWeaponRecoil(FiringRecoil);
