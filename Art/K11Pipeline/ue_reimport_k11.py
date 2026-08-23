@@ -1,0 +1,160 @@
+# -*- coding: utf-8 -*-
+"""
+ue_reimport_k11.py  --  bring stale terrain assets back in sync with the generator.
+
+Targeted on purpose. ue_f0_apply.py re-imports four meshes, re-drapes 5000 actors off
+k11_delta.json, and slams M_K11_Ground onto everything -- running it wholesale would
+undo the material split and move actors for nothing. Measured first:
+
+  * k11_surface / k11_underground / k11_hexfield : tri count, vert count and bounds are
+    identical to their .obj, and k11_delta.json is 0.0cm across all 57288 samples.
+    Nothing to do -- only the mtime moved.
+  * k11_f0access : 6572 tris in UE vs 7608 in the obj. This is the crater stair
+    (writeAccess(), 280 hexagonal treads) plus the round-20 rewrite of the exit
+    passage into a straight hand-cut ascent. Never imported.
+  * k11_water : 1830 vs 2724.
+  * k11_hexcut : same face count but Z extent 610 vs 700.
+
+Materials follow the split in the pipeline notes: Basalt on terrain, MazeSplit only on
+HexField, and M_K11_Ground is not used at all.
+
+Run from the loaded project with Unreal Editor's Execute Python Script command.
+"""
+import unreal, os, time
+
+TOOLS = os.path.dirname(os.path.abspath(__file__))
+DEST = '/Game/Wasteland/Terrain'
+
+# (obj, asset name, actor label, fallback material path)
+# The fallback is only used when the actor does not exist yet. For an actor that is
+# already in the level we KEEP whatever material it currently has -- material work is
+# happening in parallel and re-import must not stomp it.
+JOBS = [
+    ('k11_surface.obj',     'k11_surface',     'K11_Surface',     '/Game/Wasteland/Scan/M_K11_Basalt'),
+    ('k11_underground.obj', 'k11_underground', 'K11_Underground', '/Game/Wasteland/Scan/M_K11_Basalt'),
+    ('k11_f0access.obj',    'k11_f0access',    'K11_F0Access',    '/Game/Wasteland/Scan/M_K11_Basalt'),
+    ('k11_hexfield.obj',    'k11_hexfield',    'K11_HexField',    '/Game/Wasteland/Scan/M_K11_MazeSplit'),
+    ('k11_hexcut.obj',      'k11_hexcut',      'K11_HexCut',      '/Game/Wasteland/Materials/M_K11_Cut'),
+    # 远景地形：只挡视线，不挡人，也不参与导航
+    ('k11_farfield.obj',    'k11_farfield',    'K11_FarField',    '/Game/Wasteland/Scan/M_K11_Scan'),
+    # 统一岩体：一整块实心，减掉三个空腔（第二层洞腔 / 山顶巨坑 / 逃生地道）。
+    # 岩壁是减完剩下的边界，不是先造墙再补岩石。
+    # 取代 k11_rock_upper + k11_rock_lower + k11_crustfill 三个中间版本。
+    # 出口围裙：直接插进去的实体，把地道口四周那圈洞填掉（给地道留孔）。
+    # 洞的成因是地表(高度场)和岩体(等值面)之间隔着 SKIN=400cm，地表一开孔就露出
+    # 低 400cm 的岩体顶面；在生成器里改参数只能把洞挪位置，补实体才是对的。
+    ('k11_exit_apron.obj', 'k11_exit_apron', 'K11_ExitApron', '/Game/Wasteland/Scan/M_K11_Scan'),
+    ('k11_rock.obj',        'k11_rock',        'K11_Rock',        '/Game/Wasteland/Scan/M_K11_Scan'),
+]
+# k11_water 早已不再生成（迷宫足迹+入口排掉之后没有低于水线的格），旧的水面平面
+# 曾经泡住 56 个采样点的迷宫走廊，必须删掉而不是留着指向陈旧网格。
+# k11_crustfill 是"6 层叠板"那一版填充，已被等值面的 k11_rock_upper 取代。
+DELETE_LABELS = ['K11_Water', 'K11_CrustFill', 'K11_RockUpper', 'K11_RockLower']
+# Water is a look-only plane: it must never block a capsule or generate navmesh.
+# It used to be BlockAll + affects-navigation, sitting 7m above the maze floor.
+NO_COLLIDE = {'K11_Water', 'K11_FarField'}
+
+_les = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+
+
+def import_obj(fn, name):
+    t = unreal.AssetImportTask()
+    t.filename = os.path.join(TOOLS, fn)
+    t.destination_path = DEST
+    t.destination_name = name
+    t.automated = True
+    t.save = True
+    t.replace_existing = True
+    ui = unreal.FbxImportUI()
+    ui.import_mesh = True
+    ui.import_textures = False
+    ui.import_materials = False
+    ui.import_animations = False
+    ui.automated_import_should_detect_type = False
+    ui.mesh_type_to_import = unreal.FBXImportType.FBXIT_STATIC_MESH
+    ui.static_mesh_import_data.set_editor_property('combine_meshes', True)
+    ui.static_mesh_import_data.set_editor_property('auto_generate_collision', False)
+    t.options = ui
+    unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([t])
+    for p in t.imported_object_paths:
+        a = unreal.load_asset(str(p))
+        if isinstance(a, unreal.StaticMesh):
+            bs = a.get_editor_property('body_setup')
+            bs.set_editor_property('collision_trace_flag',
+                                   unreal.CollisionTraceFlag.CTF_USE_COMPLEX_AS_SIMPLE)
+            unreal.EditorAssetLibrary.save_loaded_asset(a)
+            return a
+    return None
+
+
+def repoint(label, mesh, mat_path):
+    """Point the existing actor at the re-imported mesh. Keeps the actor identity so
+    nothing else in the level loses its reference."""
+    acts = [a for a in _les.get_all_level_actors() if a.get_actor_label() == label]
+    fresh = False
+    if not acts:
+        a = _les.spawn_actor_from_class(unreal.StaticMeshActor,
+                                        unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0))
+        a.set_actor_label(label)
+        acts = [a]
+        fresh = True
+    for a in acts:
+        c = a.static_mesh_component
+        keep = [m for m in c.get_materials() if m is not None]
+        c.set_editor_property('static_mesh', mesh)
+        c.set_editor_property('mobility', unreal.ComponentMobility.STATIC)
+        collide = label not in NO_COLLIDE
+        c.set_editor_property('can_ever_affect_navigation', collide)
+        if not collide:
+            c.set_collision_profile_name('NoCollision')
+            c.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
+        if keep and not fresh:
+            for i in range(c.get_num_materials()):
+                c.set_material(i, keep[min(i, len(keep) - 1)])
+            shown = keep[0].get_name() + ' (kept)'
+        else:
+            mat = unreal.EditorAssetLibrary.load_asset(mat_path)
+            if mat:
+                for i in range(max(1, c.get_num_materials())):
+                    c.set_material(i, mat)
+            shown = (mat.get_name() if mat else 'NONE') + ' (fallback)'
+        o, e = a.get_actor_bounds(False)
+        print('    %-16s tris=%-7d centre=(%.0f,%.0f,%.0f) extent=(%.0f,%.0f,%.0f) mat=%s%s'
+              % (label, mesh.get_num_triangles(0), o.x, o.y, o.z, e.x, e.y, e.z,
+                 shown, '' if collide else '  [NoCollision/no-nav]'))
+
+
+def run():
+    # ---- 前置闸：编辑器世界没就绪就不许动 ----
+    # 在 PIE 里、或地图没加载时，get_all_level_actors() 返回空。这种状态下脚本会把
+    # 删除跑成空操作、把重摆跑成 spawn 返回 None，最后还照样调 save —— 有把
+    # 关卡存成空的风险。实测踩到过两次（都没造成损失，但是运气）。
+    _w = unreal.EditorLevelLibrary.get_editor_world()
+    _n = len(_les.get_all_level_actors())
+    if _w is None or _n < 100:
+        print('  !! 中止：编辑器世界没就绪 (world=%s, actors=%d)。' % (_w, _n))
+        print('     退出 PIE、确认打开的是 Lvl_Shooter，再跑一次。')
+        return
+    t0 = time.time()
+    print('=' * 74)
+    print('K-11 TARGETED RE-IMPORT')
+    print('=' * 74)
+    unreal.SystemLibrary.execute_console_command(None, 'Interchange.FeatureFlags.Import.OBJ false')
+    for lbl in DELETE_LABELS:
+        for a in [x for x in _les.get_all_level_actors() if x.get_actor_label() == lbl]:
+            _les.destroy_actor(a)
+            print('    removed %s (generator no longer emits it)' % lbl)
+    for fn, nm, lbl, mat in JOBS:
+        m = import_obj(fn, nm)
+        if not m:
+            print('    !! import failed: %s' % fn)
+            continue
+        repoint(lbl, m, mat)
+    unreal.SystemLibrary.execute_console_command(
+        unreal.EditorLevelLibrary.get_editor_world(), 'RebuildNavigation')
+    unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)
+    print('  saved + nav rebuild requested   (%.0fs)' % (time.time() - t0))
+    print('=' * 74)
+
+
+run()
