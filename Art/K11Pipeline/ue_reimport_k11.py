@@ -34,16 +34,13 @@ JOBS = [
     ('k11_underground.obj', 'k11_underground', 'K11_Underground', '/Game/Wasteland/Scan/M_K11_Basalt'),
     ('k11_f0access.obj',    'k11_f0access',    'K11_F0Access',    '/Game/Wasteland/Scan/M_K11_Basalt'),
     ('k11_hexfield.obj',    'k11_hexfield',    'K11_HexField',    '/Game/Wasteland/Scan/M_K11_MazeSplit'),
+    ('k11_navfloor.obj',    'k11_navfloor',    'K11_NavFloor',    '/Game/Wasteland/FX/M_BoBInvisible'),
     ('k11_hexcut.obj',      'k11_hexcut',      'K11_HexCut',      '/Game/Wasteland/Materials/M_K11_Cut'),
     # 远景地形：只挡视线，不挡人，也不参与导航
     ('k11_farfield.obj',    'k11_farfield',    'K11_FarField',    '/Game/Wasteland/Scan/M_K11_Scan'),
     # 统一岩体：一整块实心，减掉三个空腔（第二层洞腔 / 山顶巨坑 / 逃生地道）。
     # 岩壁是减完剩下的边界，不是先造墙再补岩石。
     # 取代 k11_rock_upper + k11_rock_lower + k11_crustfill 三个中间版本。
-    # 出口围裙：直接插进去的实体，把地道口四周那圈洞填掉（给地道留孔）。
-    # 洞的成因是地表(高度场)和岩体(等值面)之间隔着 SKIN=400cm，地表一开孔就露出
-    # 低 400cm 的岩体顶面；在生成器里改参数只能把洞挪位置，补实体才是对的。
-    ('k11_exit_apron.obj', 'k11_exit_apron', 'K11_ExitApron', '/Game/Wasteland/Scan/M_K11_Scan'),
     ('k11_rock.obj',        'k11_rock',        'K11_Rock',        '/Game/Wasteland/Scan/M_K11_Scan'),
 ]
 # k11_water 早已不再生成（迷宫足迹+入口排掉之后没有低于水线的格），旧的水面平面
@@ -104,7 +101,8 @@ def repoint(label, mesh, mat_path):
         c.set_editor_property('static_mesh', mesh)
         c.set_editor_property('mobility', unreal.ComponentMobility.STATIC)
         collide = label not in NO_COLLIDE
-        c.set_editor_property('can_ever_affect_navigation', collide)
+        affects_nav = collide
+        c.set_editor_property('can_ever_affect_navigation', affects_nav)
         if not collide:
             c.set_collision_profile_name('NoCollision')
             c.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
@@ -118,6 +116,10 @@ def repoint(label, mesh, mat_path):
                 for i in range(max(1, c.get_num_materials())):
                     c.set_material(i, mat)
             shown = (mat.get_name() if mat else 'NONE') + ' (fallback)'
+        if label == 'K11_NavFloor':
+            # 专用碰撞/导航面不参与画面，只给角色和 Recast 提供一张连续表面。
+            c.set_editor_property('cast_shadow', False)
+            c.set_editor_property('render_in_main_pass', False)
         o, e = a.get_actor_bounds(False)
         print('    %-16s tris=%-7d centre=(%.0f,%.0f,%.0f) extent=(%.0f,%.0f,%.0f) mat=%s%s'
               % (label, mesh.get_num_triangles(0), o.x, o.y, o.z, e.x, e.y, e.z,
@@ -150,6 +152,26 @@ def run():
             print('    !! import failed: %s' % fn)
             continue
         repoint(lbl, m, mat)
+    # Lvl_Shooter 是 World Partition 地图；Recast 仍保持模板默认的非分区模式时，
+    # Navigation Data Builder 虽会写出 chunk actors，正常编辑器却继续读取旧整图 NavMesh。
+    # 把导航数据本身切到分区模式，之后由官方 WorldPartitionNavigationDataBuilder
+    # 生成并持久化 chunks，地图和导航权威才是一致的。
+    recast = [a for a in _les.get_all_level_actors()
+              if a.get_class().get_name() == 'RecastNavMesh']
+    if not recast:
+        print('    !! no RecastNavMesh actor found; partitioned nav cannot be enabled')
+    for nav in recast:
+        if not nav.get_editor_property('is_world_partitioned'):
+            nav.set_editor_property('is_world_partitioned', True)
+            print('    enabled World Partition navigation on %s' % nav.get_actor_label())
+        # The level spans roughly 2.6 km and stacks surface/cavern/maze navigation.
+        # The template pool is sized for a small arena; once full it drops whole
+        # vertical tile bands from the underground mesh.  Reserve enough streaming
+        # tiles for the authored bounds instead of changing level geometry to hide it.
+        nav.set_editor_property('fixed_tile_pool_size', True)
+        if nav.get_editor_property('tile_pool_size') < 16384:
+            nav.set_editor_property('tile_pool_size', 16384)
+            print('    navigation tile pool: 16384')
     unreal.SystemLibrary.execute_console_command(
         unreal.EditorLevelLibrary.get_editor_world(), 'RebuildNavigation')
     unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)

@@ -19,7 +19,7 @@ GROUND = {'K11_Surface', 'K11_Underground', 'K11_F0Access'}
 # k11_water is no longer emitted: excluding the maze footprint and the entry apron from
 # the water mask left no cell below the water line.
 PAIRS = ['k11_surface', 'k11_underground', 'k11_f0access',
-         'k11_hexfield', 'k11_hexcut']
+         'k11_hexfield', 'k11_hexcut', 'k11_navfloor']
 MAZE_C = (-8880, -6144)          # altar
 MAZE_R = 8800                    # maze outer radius, cm
 HEX_R = 170.0
@@ -229,7 +229,7 @@ def maze_corridor_cells():
             # 起点必须在洞顶【下面】。洞顶被压到 -2280 之后，从 -2000 起打会先撞洞顶，
             # 迷宫墙样本一下从 1052 掉到 179，A6 也跟着假摔。
             h = trace_z(x, y, -2450, -4800)
-            if h and h[1] == 'K11_HexField' and abs(h[0] - MAZE_FLOOR) <= 40:
+            if h and h[1] == 'K11_NavFloor' and abs(h[0] - MAZE_FLOOR) <= 40:
                 out.append((x, y, h[0]))
     return out
 
@@ -239,25 +239,53 @@ def a6_maze_connected():
     allc = maze_corridor_cells()
     cells = allc
     ok_n = 0
+    off_nav = 0
     stops = Counter()
+    blockers = Counter()
     failed = []
+    # FindPathToLocationSynchronously consumes raw Recast coordinates; unlike the
+    # gameplay move request it does not project an arbitrary world-space endpoint
+    # onto navigation first.  Probe within one corridor cell so A6 measures actual
+    # connectivity, while a cell with no navigation polygon still fails explicitly.
+    extent = unreal.Vector(120, 120, 120)
+    entry_nav = unreal.NavigationSystemV1.project_point_to_navigation(
+        W, unreal.Vector(*ENTRY), None, None, extent)
+    # UE 5.8's Python wrapper returns only ProjectedLocation.  K2 leaves that
+    # output at the zero vector when projection fails.
+    if entry_nav.length() < 1:
+        report('A6', 'maze fully connected', False, 'entry has no navigation polygon')
+        return
     for (x, y, z) in cells:
+        target_nav = unreal.NavigationSystemV1.project_point_to_navigation(
+            W, unreal.Vector(x, y, z + 40), None, None, extent)
+        if target_nav.length() < 1:
+            off_nav += 1
+            failed.append(('off-nav', round(x), round(y)))
+            continue
         p = unreal.NavigationSystemV1.find_path_to_location_synchronously(
-            W, unreal.Vector(*ENTRY), unreal.Vector(x, y, z + 40))
+            W, entry_nav, target_nav)
         pts = p.get_editor_property('path_points') if p else None
         if not pts:
             failed.append(('no-path', round(x), round(y)))
             continue
         e = pts[-1]
-        if math.dist((e.x, e.y, e.z), (x, y, z + 40)) < 200:
+        if math.dist((e.x, e.y, e.z), (target_nav.x, target_nav.y, target_nav.z)) < 200:
             ok_n += 1
         else:
             stops[(round(e.x / 500) * 500, round(e.y / 500) * 500)] += 1
+            hit = unreal.SystemLibrary.line_trace_single(
+                W, unreal.Vector(e.x, e.y, target_nav.z + 60),
+                unreal.Vector(target_nav.x, target_nav.y, target_nav.z + 60),
+                Q, True, [], unreal.DrawDebugTrace.NONE, True)
+            if hit:
+                actor = hit.to_dict()['hit_actor']
+                blockers[actor.get_actor_label() if actor else '?'] += 1
             failed.append((round(x), round(y), round(e.x), round(e.y)))
     rate = 100.0 * ok_n / max(len(cells), 1)
-    report('A6', 'maze fully connected', ok_n == len(cells),
-           'reachable %d/%d (%.0f%%)%s' % (ok_n, len(cells), rate,
-           (('  stalls at %s; targets %s' % (stops.most_common(), failed[:30]))
+    report('A6', 'maze fully connected', bool(cells) and ok_n == len(cells),
+           'reachable %d/%d (%.0f%%) | off-nav %d%s' % (ok_n, len(cells), rate, off_nav,
+           (('  stalls at %s; blockers %s; targets %s' %
+             (stops.most_common(), blockers.most_common(), failed[:30]))
             if stops or failed else '')))
 
 
@@ -279,7 +307,7 @@ def a7a8_wall_and_step():
             # 起点必须在洞顶【下面】。洞顶被压到 -2280 之后，从 -2000 起打会先撞洞顶，
             # 迷宫墙样本一下从 1052 掉到 179，A6 也跟着假摔。
             h = trace_z(x, y, -2450, -4800)
-            if h and h[1] == 'K11_HexField':
+            if h and h[1] in ('K11_HexField', 'K11_NavFloor'):
                 zs[(q, r)] = h[0]
     if not zs:
         report('A7', 'maze wall height', False, 'no HexField samples')
@@ -477,8 +505,17 @@ def x_tunnel():
         return
     e = pts[-1]
     d = math.dist((e.x, e.y, e.z), (b[0], b[1], b[2] + 60))
+    blocker = ''
+    if d >= 400:
+        h = unreal.SystemLibrary.line_trace_single(
+            W, unreal.Vector(e.x, e.y, e.z + 40),
+            unreal.Vector(b[0], b[1], b[2] + 100),
+            Q, True, [], unreal.DrawDebugTrace.NONE, True)
+        if h:
+            a = h.to_dict()['hit_actor']
+            blocker = ' | blocker ' + (a.get_actor_label() if a else '?')
     report('S4', 'exit tunnel navigable', d < 400,
-           'path %d pts, ends %.0fcm from the surface mouth' % (len(pts), d))
+           'path %d pts, ends %.0fcm from the surface mouth%s' % (len(pts), d, blocker))
 
 
 def x_stair_nav():

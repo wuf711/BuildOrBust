@@ -37,6 +37,9 @@ Art/K11Pipeline/scan_tex/
 Art/K11Pipeline/**/*.obj
 Art/K11Pipeline/**/*.fbx
 Art/K11Pipeline/**/*.png
+Art/K11Pipeline/k11_delta.json
+Art/K11Pipeline/k11_height_current.json
+Art/K11Pipeline/k11_tunnel.json
 
 # ===== 本地决策与历史档案（不公开）=====
 docs/sessions/

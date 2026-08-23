@@ -588,7 +588,10 @@ let EXIT_RAMP_X = 0, EXIT_RAMP_Y = 0;
 // 地道刚出洞口的十几环还在迷宫墙的高度带里，迷宫墙会直接把地道堵死。
 let TUN_PATH = [];
 const LOBES = [
-  { cx: UG.cx, cy: UG.cy, rx: UG.rx, ry: UG.ry },        // the reveal chamber
+  // 主洞腔必须包住完整迷宫。迷宫会在下面被强制置活；如果洞腔仍沿用较小的
+  // 8600x7000 椭圆，东西两角会穿过 surface/crust 的实体边界，地板存在但玩家被
+  // 岩体幕墙截断。扩大的是洞腔布尔范围，不是地表或关卡边界。
+  { cx: UG.cx, cy: UG.cy, rx: 10500, ry: 9500 },          // the reveal chamber + maze
   { cx: -9600, cy: -11000, rx: 3000, ry: 4600 },          // gallery down to the entry
   { cx: ENTRY.x, cy: ENTRY.y, rx: 3600, ry: 3600 },       // the entry pit floor
   { cx: EXIT.x, cy: EXIT.y, rx: 1500, ry: 1500 },         // foot of the exit stair
@@ -1209,6 +1212,23 @@ function crustBottom(x, y) {
   return b;
 }
 
+// Surface is only the visible ground shell.  Tunnel enclosure belongs to K11_Rock;
+// reusing crustBottom() here drags the surface underside down to tunnelFloor-TUN_CLEAR
+// and the transition triangles slice through the maze at player height.
+function surfaceBottom(x, y) {
+  const top = surface(x, y) - SKIN;
+  let b = ugField(x, y) > 0 ? Math.min(top, ugCeil(x, y) + UG_SKIN) : top;
+  // Only the last approach to the surface mouth needs the underside lowered around
+  // the tunnel.  Applying this along the full 310m route creates transition curtains
+  // through the maze; omitting it completely lets the surface cap the final 26.5m.
+  const dExit = Math.hypot(x - EXIT.x, y - EXIT.y);
+  if (dExit > EXIT.r && dExit < 3500) {
+    const tz = tunnelFloorNear(x, y);
+    if (tz !== null) { b = Math.min(b, tz - TUN_CLEAR); }
+  }
+  return b;
+}
+
 function writeSurface(path) {
   const L = [];
   // 行距压了 √3/2，行数要按比例加回来，否则地图在 Y 方向短一截
@@ -1224,7 +1244,7 @@ function writeSurface(path) {
   const topCount = (NX + 1) * (NYH + 1);
   for (let j = 0; j <= NYH; j++) for (let i = 0; i <= NX; i++) {
     const x = latX(X0, i, j, CELL), y = latY(Y0, j, CELL);
-    L.push('v ' + x.toFixed(1) + ' ' + (-y).toFixed(1) + ' ' + crustBottom(x, y).toFixed(1));
+    L.push('v ' + x.toFixed(1) + ' ' + (-y).toFixed(1) + ' ' + surfaceBottom(x, y).toFixed(1));
     L.push('vt ' + (x / 800).toFixed(4) + ' ' + (y / 800).toFixed(4));
   }
 
@@ -1627,7 +1647,7 @@ function hexPrism(m, cx, cy, zTop, zBot, R, rot, cutMask) {
 }
 
 let MAZE_FLOOR_G = 0;   // 迷宫地面高度：建高度场时填，出网格时用来统一柱底
-function writeHexField(pathSolid, pathDeco) {
+function writeHexField(pathSolid, pathDeco, pathNav) {
   // ---- 1. 铺格 ----
   const x0 = UG.cx - UG.rx * 1.35, x1 = UG.cx + UG.rx * 1.35;
   const y0 = UG.cy - UG.ry * 1.35, y1 = UG.cy + UG.ry * 1.35;
@@ -1789,7 +1809,7 @@ function writeHexField(pathSolid, pathDeco) {
       visited.add(key(nq, nr));
       stack.push([nq, nr]);
     }
-    // ---- 编织(braiding)：给迷宫加环，别让它是一棵树 ----
+    // ---- 编织(braiding)：把完美迷宫改成开放式蜂窝街区 ----
     // 递归回溯出来的是【完美迷宫】：任意两点之间恰好一条路径，零冗余。
     // 好看，但在引擎里极其脆弱 —— 树上任何一条边断掉，它后面整棵子树就全部失联。
     // UE 实测：相邻格之间 201 次寻路只失败 5 次(2.5%)，可就这 5 处把 1412 格走廊
@@ -1798,8 +1818,7 @@ function writeHexField(pathSolid, pathDeco) {
     // 也就是说：只要迷宫是树，导航上任何一点点毛刺都会被放大成"整片区域进不去"。
     // 所以主动开一批额外的墙，让迷宫变成有环的(braided)。冗余路径一多，
     // 个别链接断了还有别的路绕过去。
-    // 死胡同不会消失 —— 只打通约 18% 的候选墙，藏物点还有的是，
-    // 而且有环的迷宫本来就更耐走，不会逼玩家一条道走到黑再原路退回。
+    // 打开约 38% 的候选连接，保留死胡同，同时给战斗和寻路留出备用路径。
     {
       let braided = 0;
       for (const rk of visited) {
@@ -1811,7 +1830,7 @@ function writeHexField(pathSolid, pathDeco) {
           if (opened.has(mid)) continue;
           // 确定性：同一对格子无论从哪一头看都得到同一个哈希，否则会开两次
           const a = Math.min(rk, key(nq, nr)), b = Math.max(rk, key(nq, nr));
-          if (hexHash(a, b, 91) < 0.18) { opened.add(mid); braided++; }
+          if (hexHash(a, b, 91) < 0.38) { opened.add(mid); braided++; }
         }
       }
       MAZE._braided = braided;
@@ -2055,6 +2074,87 @@ function writeHexField(pathSolid, pathDeco) {
     MAZE._repaired = repaired;
   }
 
+  // ---- 4c. 独立迷宫导航面 ----
+  // 视觉柱体继续保留参差高度与完整侧壁，但 Recast 不再依赖几千根彼此独立的复杂碰撞柱。
+  // 整个迷宫足迹铺一张连续底板，墙柱的碰撞再从中刻出走廊。只给可走格铺面会让
+  // Recast 把每个格子的外缘都当障碍侵蚀，视觉上贴合的蜂窝仍会被切成导航孤岛。
+  // 相邻格复用同一组边界顶点，OBJ 在拓扑上是一张连续网格。
+  //
+  // 顶面抬高 2cm，避免与视觉地板完全共面；玩家碰撞和导航都会优先落在这张面上，
+  // 但高度差远低于角色与 Recast 的台阶阈值。六边形最少需要 4 个三角形，1752 格约
+  // 7008 面，仍显著低于完整柱体碰撞，并且没有侧面、底面或内部重叠面。
+  const navV = [], navF = [], navIndex = new Map();
+  const navMask = new Uint8Array(N);
+  const NAV_Z = MAZE_FLOOR + 2;
+  function navVertex(x, y) {
+    const key = Math.round(x * 10) + '_' + Math.round(y * 10);
+    let vi = navIndex.get(key);
+    if (vi !== undefined) return vi;
+    navV.push('v ' + x.toFixed(1) + ' ' + (-y).toFixed(1) + ' ' + NAV_Z.toFixed(1));
+    vi = navV.length;
+    navIndex.set(key, vi);
+    return vi;
+  }
+  let navCells = 0;
+  for (let q = 0; q < NQ; q++) for (let r = 0; r < NR; r++) {
+    const k = idx(q, r);
+    if (!live[k] || !mazeCell[k]) continue;
+    const ring = [];
+    for (let side = 0; side < 6; side++) {
+      const a = Math.PI / 3 * side;
+      ring.push(navVertex(cX[k] + Math.cos(a) * HEX_R,
+                          cY[k] + Math.sin(a) * HEX_R));
+    }
+    // OBJ 输出把 Y 取负，绕序也必须反转，保证法线朝上。
+    for (let side = 1; side < 5; side++) {
+      navF.push('f ' + ring[0] + ' ' + ring[side + 1] + ' ' + ring[side]);
+    }
+    navMask[k] = 1;
+    navCells++;
+  }
+
+  // 补片封住浮点精度造成的格缝。它们位于连续底板内；真正不可通行的位置仍由
+  // K11_HexField 的墙柱碰撞切除，不靠导航面本身表达墙。
+  let navBridges = 0;
+  const BRIDGE_HALF = 120;
+  for (let cell = 0; cell < N; cell++) {
+    if (!navMask[cell]) continue;
+    const cq = (cell / NR) | 0, cr = cell - cq * NR;
+    for (const next of nbrs(cq, cr)) {
+      if (next <= cell || !navMask[next]) continue;
+      const dx = cX[next] - cX[cell], dy = cY[next] - cY[cell];
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len * BRIDGE_HALF, ny = dx / len * BRIDGE_HALF;
+      const p0 = navVertex(cX[cell] + nx, cY[cell] + ny);
+      const p1 = navVertex(cX[next] + nx, cY[next] + ny);
+      const p2 = navVertex(cX[next] - nx, cY[next] - ny);
+      const p3 = navVertex(cX[cell] - nx, cY[cell] - ny);
+      // p0..p3 在世界坐标中为顺时针；OBJ 的 Y 镜像把它翻成朝上的逆时针。
+      navF.push('f ' + p0 + ' ' + p1 + ' ' + p2);
+      navF.push('f ' + p0 + ' ' + p2 + ' ' + p3);
+      navBridges++;
+    }
+  }
+  fs.writeFileSync(pathNav, navV.concat(navF).join('\n'));
+
+  // 按实际写入导航面的格子统计连通块。这里不看 mazeCell 的“应该可走”，只看最终
+  // navMask 的“确实写出”，防止生成器又回到拿设计状态自证输出状态的老问题。
+  const navSeen = new Uint8Array(N);
+  let navComponents = 0, navLargest = 0;
+  for (let seed = 0; seed < N; seed++) {
+    if (!navMask[seed] || navSeen[seed]) continue;
+    navComponents++;
+    const queue = [seed]; navSeen[seed] = 1;
+    for (let head = 0; head < queue.length; head++) {
+      const cell = queue[head], cq = (cell / NR) | 0, cr = cell - cq * NR;
+      for (const next of nbrs(cq, cr)) {
+        if (!navMask[next] || navSeen[next]) continue;
+        navSeen[next] = 1; queue.push(next);
+      }
+    }
+    navLargest = Math.max(navLargest, queue.length);
+  }
+
   // ---- 5. 出网格 ----
   const solid = new HexMesh(), deco = new HexMesh();
   let cols = 0, ceilCols = 0, coverCols = 0, cutCols = 0, minClear = 1e9;
@@ -2222,6 +2322,8 @@ function writeHexField(pathSolid, pathDeco) {
              clear: ugCeil(A.x, A.y) - AZ[A.name] };
   });
   return { maze: mazeStat,
+           navCells: navCells, navVerts: navV.length, navFaces: navF.length,
+           navBridges: navBridges, navComponents: navComponents, navLargest: navLargest,
            cols: cols, ceilCols: ceilCols, coverCols: coverCols, cutCols: cutCols,
            cutFaces: solid.F[MAT_CUT].length, topFaces: solid.F[MAT_TOP].length,
            sideFaces: solid.F[MAT_SIDE].length, verts: vs, decoVerts: vd,
@@ -2603,6 +2705,12 @@ function densRockSolid(x, y, z) {
   let d = Math.min(surface(x, y) - SKIN - z, z - ROCK_BASE);
   if (d <= -ROCK_CS * 2) { return d; }                 // 早退，省掉后面的距离计算
   d = Math.min(d, -chamberInside(x, y, z));                                        // 减第二层洞腔
+  // 西北六边形尖角略超出椭圆洞腔，等值岩体会在玩家高度围住最外侧支路。
+  // 只从 K11_Rock 中挖这个局部净空，不把它加入 ugField；后者会改变出口地道的
+  // 高度场与寻路。椭圆横截面覆盖 A6 实测的 x=-16530..-15500/y=-4000..-1400。
+  const westR = 1 - Math.hypot((x + 16050) / 2200, (y + 2700) / 2800);
+  const westClear = Math.min(westR * 2200, z - (ENTRY.floor - 500), -1700 - z);
+  d = Math.min(d, -westClear);
   d = Math.min(d, Math.hypot(x - ENTRY.x, y - ENTRY.y) - entryRadiusAt(z) * 1.02);  // 减山顶巨坑
   d = Math.min(d, tunnelDist3(x, y, z, TUN_BORE));                                  // 减逃生地道
   return d;
@@ -2777,7 +2885,8 @@ const acc = writeAccess(OUT + '/k11_f0access.obj');
 const sres = writeSurface(OUT + '/k11_surface.obj');
 const nv = sres.verts;
 const ug = writeUnderground(OUT + '/k11_underground.obj');
-const hex = writeHexField(OUT + '/k11_hexfield.obj', OUT + '/k11_hexdeco.obj');
+const hex = writeHexField(OUT + '/k11_hexfield.obj', OUT + '/k11_hexdeco.obj',
+                          OUT + '/k11_navfloor.obj');
 const twr = writeTowers(OUT + '/k11_towers.obj');
 // 分区实体岩层必须排在这里：要等 writeAccess 把 TUN_CENTRE 填好
 const rock = buildRockSolid(OUT + '/k11_rock.obj');
@@ -2823,6 +2932,10 @@ console.log('  [净空] 走廊网络内最低净空 ' + R(hex.minClear) + 'm  (�
 console.log('  --- 负一层迷宫 (模式图第2组) ---');
 console.log('    走廊 ' + hex.maze.corridor + ' 格 | 环墙 ' + hex.maze.wall + ' 格 | 死胡同藏物点 '
   + hex.maze.dead + ' 格 | 祭坛室 ' + hex.maze.altar + ' 格');
+console.log('    独立导航面 ' + hex.navCells + ' 格 | ' + hex.navVerts + ' 共享顶点 | '
+  + hex.navFaces + ' tris (' + hex.navBridges + ' 条侵蚀桥) | 连通块 '
+  + hex.navComponents + ' (最大 ' + hex.navLargest + ') -> '
+  + (hex.navComponents === 1 && hex.navLargest === hex.navCells ? 'PASS' : 'FAIL'));
 console.log('    [可达] 中心祭坛 ' + hex.maze.reachAltar + '/' + hex.maze.altar
   + ' 格可达  ->  ' + (hex.maze.reachAltar > 0 ? 'PASS' : 'FAIL 入口走不到中心'));
 console.log('    [可达] 死胡同藏物点 ' + hex.maze.reachDead + '/' + hex.maze.dead + ' 格可达');
@@ -2890,18 +3003,23 @@ console.log('  surface open at entry bottom: ' + ugOpen(ENTRY.x, ENTRY.y)
 // 地道必须落在"地表面 ~ 地壳底面"这个闭合体【内部】，否则它就是一根悬在虚空里的管子
 // （UE 截图实测过：中段 z=-1801，而那里地壳底面还在二十多米之上）。
 {
-  let outAbove = 0, outBelow = 0, worst = 0, inCav = 0;
+  let mouthOpen = 0, outAbove = 0, outBelow = 0, worst = 0, inCav = 0;
   for (const [x, y, z] of TUN_CENTRE) {
     if (ugField(x, y) > 0) { inCav++; continue; }   // 洞腔段由洞腔自己负责
     const top = surface(x, y);
     const bot = crustBottom(x, y);
-    if (z + TUN_ARCH_REF > top) { outAbove++; }
+    if (z + TUN_ARCH_REF > top) {
+      // 合法破土范围必须与实际开洞白名单完全一致，不能另拍一个出口半径。
+      if (tunnelDaylight(x, y)) mouthOpen++;
+      else outAbove++;
+    }
     if (z < bot) { outBelow++; worst = Math.max(worst, bot - z); }
   }
   const bad = outAbove + outBelow;
   console.log('--- 逃生地道包裹检查 (' + TUN_CENTRE.length + ' 环，其中 ' + inCav + ' 环在洞腔内) ---');
-  console.log('  捅出地表 ' + outAbove + ' 环 | 掉出地壳底面 ' + outBelow + ' 环(最深 ' + R(worst) + 'm)'
-    + (bad === 0 ? '   -> PASS 全程包在实心地壳里' : '   <-- FAIL 有悬空段'));
+  console.log('  合法出口 ' + mouthOpen + ' 环 | 中途穿出地表 ' + outAbove + ' 环 | 掉出地壳底面 '
+    + outBelow + ' 环(最深 ' + R(worst) + 'm)'
+    + (bad === 0 ? '   -> PASS 地道包裹完整且出口正常破土' : '   <-- FAIL 地道包裹破损'));
 }
 console.log('--- 远景地形 (无碰撞，只挡视线) ---');
 console.log('  ' + farf.cells + ' 格 @' + FAR_CELL + 'cm, ' + farf.tris + ' 三角, '
