@@ -15,6 +15,20 @@ except Exception as _import_err:  # pragma: no cover - defensive
     bob_mcp_tools = None
 
 
+def _editor_will_never_arrive():
+    """True for -game / cooked-style runs, where there is no editor to wait for.
+
+    Without this the retry loop below spends 600 slate ticks calling a registry
+    that logs 'Editor is not available' every single time, then reports failure
+    for something that was never going to succeed.
+    """
+    try:
+        cmdline = unreal.SystemLibrary.get_command_line().lower()
+    except Exception:
+        return False
+    return " -game" in cmdline or cmdline.endswith(" -game")
+
+
 def _try_register():
     """Return True when we should stop retrying (registered, or a hard failure)."""
     if bob_mcp_tools is None:
@@ -26,7 +40,9 @@ def _try_register():
         return True
 
 
-if bob_mcp_tools is not None and not _try_register():
+if bob_mcp_tools is not None and _editor_will_never_arrive():
+    unreal.log("[BoB MCP] no editor in this run, skipping toolset registration.")
+elif bob_mcp_tools is not None and not _try_register():
     _state = {"handle": None, "ticks": 0}
 
     def _on_tick(delta_seconds):
