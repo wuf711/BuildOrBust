@@ -196,6 +196,16 @@ protected:
 	/** 按速度切换 待机/走/跑 循环动画 */
 	void UpdateLocomotionAnim();
 
+	/**
+	 *  把选好的片段播出去。默认走单节点播放（丧尸一直是这么做的）。
+	 *
+	 *  留这个缝是因为 PlayAnimation 会把网格切成单节点模式，顺手销毁挂着的
+	 *  AnimInstance。子类要是自己挂了 AnimInstance（BoBEnemy 靠它叠变种姿态），
+	 *  步态一换就会被这里冲掉，所以让子类自己决定"怎么播"，
+	 *  "播哪一段"的逻辑仍归基类。
+	 */
+	virtual void PlayLocoAnim(UAnimSequence* Anim, bool bLoop);
+
 	/** 播放一次随机攻击动画（各端本地播放） */
 	void PlayAttackAnim();
 

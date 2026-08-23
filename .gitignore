@@ -23,3 +23,48 @@ Packaged/
 # ===== 操作系统 =====
 Thumbs.db
 .DS_Store
+FabAssets/
+Art/Source/FabAssets/
+
+# ===== 本地工具状态 / Python 缓存 =====
+__pycache__/
+*.py[cod]
+
+# ===== 本地审图与临时导出 =====
+_preview/
+Art/Export/
+Art/K11Pipeline/scan_tex/
+Art/K11Pipeline/**/*.obj
+Art/K11Pipeline/**/*.fbx
+Art/K11Pipeline/**/*.png
+
+# ===== 本地决策与历史档案（不公开）=====
+docs/sessions/
+docs/history/
+Art/K11Pipeline/legacy/
+tools/local_legacy/
+
+# ===== 第三方商店资产（本地安装，不在公共仓库再分发）=====
+Content/AR70/
+Content/Attaku/
+Content/FPS_Weapon_Bundle/
+Content/Flesh_and_Stone/
+Content/FreeWastelandProps_Meshingun/
+Content/Knife_FPS_Animations/
+Content/LP_FPSLite_JC/
+Content/Military_Radio/
+Content/Post-Apocalyptic_Props/
+Content/Scifi_desert_city/
+Content/SpearAnimationsV2/
+Content/StylizedRocksLite_JC/
+Content/Ultimate_Rocks/
+Content/Wasteland/Car/
+Content/Wasteland/HexApoc/
+Content/Wasteland/Scan/K11_*.uasset
+Content/__ExternalActors__/FirstPerson/Maps/
+Content/__ExternalActors__/Knife_FPS_Animations/
+Content/__ExternalActors__/Military_Radio/
+Content/__ExternalActors__/Post-Apocalyptic_Props/
+Content/__ExternalObjects__/Knife_FPS_Animations/
+Content/__ExternalObjects__/Military_Radio/
+Content/__ExternalObjects__/Post-Apocalyptic_Props/

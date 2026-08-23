@@ -24,6 +24,7 @@
 #include "Animation/AnimSequence.h"
 #include "Engine/SkeletalMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "LootPickup.h"
 
 AShooterNPC::AShooterNPC()
 {
@@ -111,6 +112,17 @@ void AShooterNPC::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	GetWorld()->GetTimerManager().ClearTimer(RangedTimer);
 }
 
+// 野生同化体：散布在远处各类地形上的环境敌人，不属于任何一次同化潮。
+// 它们不啃核心、不进潮次计数、不被靠近就不主动打人；击败给配额或隐藏道具。
+// 用 Actor 标签而不是新增属性，是为了留在 .cpp 里走 LiveCoding 热更（新 .h 要关编辑器整编），
+// 也跟工程里 BoBDummy / BoBWpnR 那批标签是同一套做法。
+static const FName TAG_BoBWild(TEXT("BoBWild"));
+static const FName TAG_BoBWildAngry(TEXT("BoBWildAngry"));
+static FORCEINLINE bool IsWildNPC(const AActor* A)
+{
+	return A && A->Tags.Contains(TAG_BoBWild);
+}
+
 void AShooterNPC::MeleeAttackTick()
 {
 	if (bIsDead)
@@ -120,7 +132,8 @@ void AShooterNPC::MeleeAttackTick()
 
 	// 啃食核心：贴近即咬（动画由步态轮询的循环撕咬状态负责；这里只做服务器权威伤害结算）
 	// （不依赖核心侧 DamageZone 重叠检测——其半径被蓝图实例旧序列化值污染是历史病根）
-	if (HasAuthority())
+	// 野生同化体不参与：它们对核心没有兴趣，这正是它们和同化潮的分界
+	if (HasAuthority() && !IsWildNPC(this))
 	{
 		if (ABaseCore* Core = Cast<ABaseCore>(UGameplayStatics::GetActorOfClass(GetWorld(), ABaseCore::StaticClass())))
 		{
@@ -240,7 +253,9 @@ void AShooterNPC::UpdateLocomotionAnim()
 
 	// 贴身啃核心：循环播放固定攻击动画（LocoState=4）。循环内无重启 → 撕咬平滑不卡帧；
 	// 每只按实例 ID 固定选一段，尸群动作仍有差异
-	if (ABaseCore* Core = Cast<ABaseCore>(UGameplayStatics::GetActorOfClass(GetWorld(), ABaseCore::StaticClass())))
+	// 野生的路过核心也不该摆出撕咬姿势——它不咬，演出就不能演
+	if (ABaseCore* Core = IsWildNPC(this) ? nullptr
+		: Cast<ABaseCore>(UGameplayStatics::GetActorOfClass(GetWorld(), ABaseCore::StaticClass())))
 	{
 		if (FVector::Dist2D(GetActorLocation(), Core->GetActorLocation()) <= CoreAttackRange)
 		{
@@ -248,7 +263,7 @@ void AShooterNPC::UpdateLocomotionAnim()
 			{
 				if (UAnimSequence* Anim = AttackAnims[GetUniqueID() % AttackAnims.Num()])
 				{
-					GetMesh()->PlayAnimation(Anim, true);
+					PlayLocoAnim(Anim, true);
 					LocoState = 4;
 				}
 			}
@@ -267,7 +282,15 @@ void AShooterNPC::UpdateLocomotionAnim()
 	UAnimSequence* Anim = (NewState == 3) ? RunAnim : (NewState == 2 ? WalkAnim : IdleAnim);
 	if (Anim)
 	{
-		GetMesh()->PlayAnimation(Anim, true);
+		PlayLocoAnim(Anim, true);
+	}
+}
+
+void AShooterNPC::PlayLocoAnim(UAnimSequence* Anim, bool bLoop)
+{
+	if (GetMesh())
+	{
+		GetMesh()->PlayAnimation(Anim, bLoop);
 	}
 }
 
@@ -285,7 +308,7 @@ void AShooterNPC::PlayAttackAnim()
 		return;
 	}
 
-	GetMesh()->PlayAnimation(Anim, false);
+	PlayLocoAnim(Anim, false);
 	AttackAnimUntil = Now + FMath::Min(Anim->GetPlayLength(), 1.4f);
 	LocoState = 0;   // 攻击结束后强制重评步态
 }
@@ -312,6 +335,13 @@ float AShooterNPC::TakeDamage(float Damage, struct FDamageEvent const& DamageEve
 
 	// 记录击杀者
 	LastInstigator = EventInstigator;
+
+	// 野生同化体被打了才转敌对。挑衅标记也走标签，这样索敌那头（ZombieAIController）
+	// 不必碰 AShooterNPC 的受保护成员，改动就能全留在 .cpp 里
+	if (Tags.Contains(TAG_BoBWild) && !Tags.Contains(TAG_BoBWildAngry))
+	{
+		Tags.Add(TAG_BoBWildAngry);
+	}
 
 	// 读取攻击者的增益与连击
 	UUpgradeComponent* Up = nullptr;
@@ -436,6 +466,8 @@ void AShooterNPC::RangedAttackTick()
 	}
 
 	// 在射程内则持续轰击中央核心（远程施压，玩家须优先点掉）
+	// 野生的远程型号同样不打核心
+	if (IsWildNPC(this)) { return; }
 	if (ABaseCore* Core = Cast<ABaseCore>(UGameplayStatics::GetActorOfClass(GetWorld(), ABaseCore::StaticClass())))
 	{
 		const float Dist = FVector::Dist(GetActorLocation(), Core->GetActorLocation());
@@ -602,6 +634,50 @@ void AShooterNPC::Die()
 
 	// 广播带击杀者信息+本丧尸得分值的委托（WaveManager 据此结算经验/连击/得分）
 	OnPawnDeathWithKiller.Broadcast(LastInstigator, ScoreValue);
+
+	// 野生同化体的隐藏道具：概率掉，不是必掉。
+	// 必掉就变成刷怪流水线；"隐藏"的意思是你事先不知道这一只身上有没有，
+	// 才值得为它绕路、才构成一次真正的取舍。掉率随型号强度走——
+	// ScoreValue 已经在投放时按型号折算过，直接拿它当强度代理，不必再查一次表。
+	if (HasAuthority() && Tags.Contains(TAG_BoBWild))
+	{
+		{
+			extern int32 GBoBWildKills;
+			GBoBWildKills++;   // 隐藏者的委托靠这个数验收
+		}
+
+		// 锚点体：野生里那一档明显更"晶化"的奖励敌人。它不碰核心、不进潮次计数，
+		// 完全可以绕开——所以打它是一次主动选择，掉的东西也就配当隐藏结局的凭证。
+		if (Tags.Contains(FName("BoBAnchor")))
+		{
+			extern void BoBSetFlag(FName Flag, bool bValue);
+			BoBSetFlag(FName("Anchor"), true);
+			UE_LOG(LogTemp, Log, TEXT("[BoB] 锚点体被击败"));
+		}
+
+		const float Chance = FMath::Clamp(0.10f + ScoreValue / 900.0f, 0.10f, 0.55f);
+		if (FMath::FRand() < Chance)
+		{
+			// 强度越高，池子越靠上。三格的唯一件不进这个池：
+			// 那几件是勘探叙事的锚点，随机掉会把它们变成刷子产物
+			static const ELootKind LowPool[]  = { ELootKind::Ore, ELootKind::Canned, ELootKind::CoinBag };
+			static const ELootKind HighPool[] = { ELootKind::Tape, ELootKind::Filter, ELootKind::MedBox, ELootKind::WeaponMod };
+			const bool bHigh = ScoreValue >= 60 && FMath::FRand() < 0.45f;
+			const ELootKind Kind = bHigh
+				? HighPool[FMath::RandRange(0, UE_ARRAY_COUNT(HighPool) - 1)]
+				: LowPool[FMath::RandRange(0, UE_ARRAY_COUNT(LowPool) - 1)];
+
+			const FVector At = GetActorLocation() + FVector(0.f, 0.f, -40.f);
+			if (ALootPickup* P = GetWorld()->SpawnActor<ALootPickup>(
+					ALootPickup::StaticClass(), At, FRotator::ZeroRotator))
+			{
+				P->Kind = Kind;
+				// 打上和地图战利品同样的标签，小地图和拾取逻辑才认它
+				P->Tags.Add(FName(Kind == ELootKind::WeaponMod ? "BoBLootWpn" : "BoBLootGem"));
+				UE_LOG(LogTemp, Log, TEXT("[BoB] 野生掉落 %s"), GetLootDef(Kind).Name);
+			}
+		}
+	}
 
 	// increment the team score
 	if (AShooterGameMode* GM = Cast<AShooterGameMode>(GetWorld()->GetAuthGameMode()))

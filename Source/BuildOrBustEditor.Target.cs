@@ -9,7 +9,7 @@ public class BuildOrBustEditorTarget : TargetRules
 	{
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.V7;
-		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_7;
+		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_8;
 		ExtraModuleNames.Add("BuildOrBust");
 
 		// 源码含 UTF-8 中文注释：强制 MSVC 按 UTF-8 读取，根治编辑器内编译（GBK 代码页）

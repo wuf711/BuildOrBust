@@ -144,10 +144,10 @@ public:
 	void DeactivateWeapon();
 
 	/** Start firing this weapon */
-	void StartFiring();
+	virtual void StartFiring();
 
 	/** Stop firing this weapon */
-	void StopFiring();
+	virtual void StopFiring();
 
 protected:
 
@@ -184,4 +184,57 @@ public:
 
 	/** Returns the current bullet count */
 	int32 GetBulletCount() const { return CurrentBullets; }
+
+	/** 补满弹匣 + 备弹并刷新 HUD（武器改装件拾取 / 补给点用） */
+	void RefillAmmo()
+	{
+		CurrentBullets = MagazineSize;
+		ReserveAmmo = MaxReserveAmmo;
+		if (WeaponOwner)
+		{
+			WeaponOwner->UpdateWeaponHUD(CurrentBullets, MagazineSize);
+		}
+	}
+
+	// ===== 备弹池：弹药有限，打空弹匣从备弹装填；备弹见底就打不了 =====
+
+	/** 备弹上限（0 = 无限弹药，用于混沌比特这类特殊武器由子类另行管理） */
+	UPROPERTY(EditAnywhere, Category="Weapon|Ammo")
+	int32 MaxReserveAmmo = 120;
+
+	/** 当前备弹 */
+	UPROPERTY(EditAnywhere, Category="Weapon|Ammo")
+	int32 ReserveAmmo = 120;
+
+	int32 GetReserveAmmo() const { return ReserveAmmo; }
+	int32 GetMaxReserveAmmo() const { return MaxReserveAmmo; }
+
+	/** 补给点：按数量补备弹，返回实际补入量 */
+	int32 AddReserveAmmo(int32 Amount)
+	{
+		const int32 Before = ReserveAmmo;
+		ReserveAmmo = FMath::Clamp(ReserveAmmo + Amount, 0, MaxReserveAmmo);
+		return ReserveAmmo - Before;
+	}
+
+	/** 弹药箱：抬高备弹上限 N 轮，并按新上限补满 */
+	void RaiseReserveCap(int32 Mags)
+	{
+		if (MaxReserveAmmo <= 0) { return; }   // 混沌比特这类不吃补给线
+		MaxReserveAmmo += MagazineSize * Mags;
+		ReserveAmmo = MaxReserveAmmo;
+	}
+
+	/** 备弹还够几轮(向下取整) */
+	int32 GetReserveMags() const { return MagazineSize > 0 ? ReserveAmmo / MagazineSize : 0; }
+
+	/** 开局统一 3 轮备弹：蓝图武器不用逐个进编辑器改 */
+	void ApplyStartingReserve()
+	{
+		if (MaxReserveAmmo <= 0) { return; }
+		ReserveAmmo = FMath::Min(MagazineSize * 3, MaxReserveAmmo);
+	}
+
+	/** 弹匣空且备弹也空 = 彻底打不了 */
+	bool IsOutOfAmmo() const { return CurrentBullets <= 0 && ReserveAmmo <= 0; }
 };

@@ -9,7 +9,7 @@ public class BuildOrBustTarget : TargetRules
 	{
 		Type = TargetType.Game;
 		DefaultBuildSettings = BuildSettingsVersion.V7;
-		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_7;
+		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_8;
 		ExtraModuleNames.Add("BuildOrBust");
 
 		// 源码含 UTF-8 中文注释：强制 MSVC 按 UTF-8 读取，避免中文 Windows 的 GBK

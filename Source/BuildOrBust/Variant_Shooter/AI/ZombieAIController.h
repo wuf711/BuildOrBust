@@ -25,9 +25,29 @@ public:
 	UPROPERTY(EditAnywhere, Category="Zombie")
 	float RetargetInterval = 1.0f;
 
-	// 距目标中心多远停止移动输入（核心碰撞球半径~420；贴到 440 让丧尸紧挨水晶啃食）
+	// 距目标中心多远停止移动输入。核心水晶在啃食高度约 410 宽，丧尸嘴 = StopDistance - 胶囊半径(~34)。
+	// 设 350 让嘴啃进水晶内部一点（消除"啃空气"的视觉缝隙）；核心隐形碰撞球 r290 兜底防钻太深
 	UPROPERTY(EditAnywhere, Category="Zombie")
-	float StopDistance = 440.0f;
+	float StopDistance = 350.0f;
+
+	//~ 前探避障（三线扇形，只测静态几何）
+	UPROPERTY(EditAnywhere, Category="Zombie|Avoidance")
+	float ProbeDistance = 220.0f;   // 前探距离
+	UPROPERTY(EditAnywhere, Category="Zombie|Avoidance")
+	float ProbeRadius = 40.0f;      // 探测球半径
+	UPROPERTY(EditAnywhere, Category="Zombie|Avoidance")
+	float ProbeAngle = 35.0f;       // 左右探线与正前的夹角
+	UPROPERTY(EditAnywhere, Category="Zombie|Avoidance")
+	float ProbeTurnAngle = 50.0f;   // 正前受阻时的实际偏转角
+
+public:
+	/**
+	 *  玩家进到这个半径内就抢走仇恨，不再一路奔核心。
+	 *  1200 约等于两个身位加一点余量——够近才算"挡路"，
+	 *  设太大会变成全场追人，守家的骨架就散了。
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AI")
+	float PlayerAggroRadius = 1200.f;
 
 protected:
 	virtual void OnPossess(APawn* InPawn) override;
@@ -41,6 +61,9 @@ private:
 
 	// 选目标：优先中央核心，无核心则最近玩家
 	void RefreshTarget();
+
+	// 三线扇形前探，返回避开静态障碍后的移动方向
+	FVector ComputeAvoidanceDir(APawn* Self, const FVector& DesiredDir) const;
 
 	//~ 卡墙脱困：正面顶住掩体等障碍时侧向绕行
 	FVector LastStallCheckPos = FVector::ZeroVector;   // 上次推进检查时的位置

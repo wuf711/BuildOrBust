@@ -43,6 +43,9 @@ enum class EUpgradeType : uint8
 	CoreRestore,		// 核心回能：每次击杀为核心回血
 	CoreReinforce,		// 核心增幅：核心血量上限提升并立即修复
 	CoreShield,			// 核心护盾：核心受到的伤害降低
+
+	// 仅用于结构体安全默认值；不进入抽卡池。
+	None UMETA(Hidden),
 };
 
 USTRUCT(BlueprintType)
@@ -51,7 +54,7 @@ struct FUpgradeData
 	GENERATED_BODY()
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
-	EUpgradeType Type;
+	EUpgradeType Type = EUpgradeType::None;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
 	FText Name;

@@ -113,8 +113,18 @@ void AShooterProjectile::NotifyHit(class UPrimitiveComponent* MyComp, AActor* Ot
 	}
 }
 
+/** 定义在 BoBFabWeapons.cpp：按样式生成一组发光网格做爆炸/掷骰特效 */
+void BoBSpawnBurstFX(UWorld* World, const FVector& Loc, int32 Effect, const FLinearColor& Color, float Radius);
+
 void AShooterProjectile::ExplosionCheck(const FVector& ExplosionCenter)
 {
+	// 蓝图弹丸(榴弹)自带的爆炸只是一颗球放大一闪而过，这里补一层慢一拍的火球+冲击环+余烬。
+	// 原生弹丸(线圈弹等)有各自的特效，不参与。
+	if (!GetClass()->IsNative() && ExplosionRadius > 100.0f)
+	{
+		BoBSpawnBurstFX(GetWorld(), ExplosionCenter, 3, FLinearColor(1.0f, 0.40f, 0.10f), ExplosionRadius);
+	}
+
 	// do a sphere overlap check look for nearby actors to damage
 	TArray<FOverlapResult> Overlaps;
 

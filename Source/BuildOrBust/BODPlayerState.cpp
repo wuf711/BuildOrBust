@@ -8,6 +8,8 @@ void ABODPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 	DOREPLIFETIME(ABODPlayerState, PlayerLevel);
 	DOREPLIFETIME(ABODPlayerState, SurvivalTime);
 	DOREPLIFETIME(ABODPlayerState, UpgradeList);
+	DOREPLIFETIME(ABODPlayerState, bReadyToStart);
+	DOREPLIFETIME(ABODPlayerState, Cinder);
 }
 
 void ABODPlayerState::BeginPlay()

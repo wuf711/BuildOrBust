@@ -9,6 +9,7 @@
 #include "EngineUtils.h"
 #include "WaveManager.h"
 #include "BaseCore.h"
+#include "BoBTerms.h"
 
 AShooterGameState::AShooterGameState()
 {
@@ -19,12 +20,25 @@ void AShooterGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Ou
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AShooterGameState, bMatchOver);
 	DOREPLIFETIME(AShooterGameState, WinnerName);
+	DOREPLIFETIME(AShooterGameState, RunSeed);
 }
 
 void AShooterGameState::BeginPlay()
 {
 	Super::BeginPlay();
 	// 计分板/状态显示已交给 AShooterHUD（per-player 绘制），此处不再用全局屏幕消息，避免多人时互相抢位置
+
+	// 开局显式绑定术语表(所有端各自绑定；绕开懒加载的静态缓存脆弱性，是标准姿势)
+	if (UDataTable* T = LoadObject<UDataTable>(nullptr, TEXT("/Game/BoB/Data/DT_BoBTerms.DT_BoBTerms")))
+	{
+		UBoBLoc::SetTermTable(T);
+	}
+
+	// 服务器开局生成本局种子(非 0)，复制给所有端；后续节点/刷新/每日模式据此可复现
+	if (HasAuthority() && RunSeed == 0)
+	{
+		RunSeed = FMath::RandRange(1, MAX_int32);
+	}
 }
 
 void AShooterGameState::SetMatchResult(const FString& InWinnerName)
@@ -51,15 +65,15 @@ void AShooterGameState::UpdateScoreboard()
 
 	// 目标提示（让新玩家一眼看懂玩法）
 	GEngine->AddOnScreenDebugMessage(Key++, 0.6f, FColor::White,
-		TEXT("【目标】守住中央核心，击杀来袭的丧尸，撑过全部波次即胜利！"));
+		TEXT("【目标】守住基准核心，清除来袭同化体，撑过十次同化潮。"));
 
 	// 波次 + 剩余敌人
 	if (TActorIterator<AWaveManager> It(World); It)
 	{
 		AWaveManager* WM = *It;
 		GEngine->AddOnScreenDebugMessage(Key++, 0.6f, FColor::Orange,
-			FString::Printf(TEXT("第 %d / %d 波      剩余敌人：%d"),
-				WM->GetCurrentWave(), WM->MaxWave, WM->GetAliveEnemyCount()));
+			FString::Printf(TEXT("TIDE %d      残余同化体：%d"),
+				WM->GetCurrentWave(), WM->GetAliveEnemyCount()));
 	}
 
 	// 核心血量
@@ -90,6 +104,6 @@ void AShooterGameState::UpdateScoreboard()
 	if (bMatchOver)
 	{
 		GEngine->AddOnScreenDebugMessage(Key++, 0.6f, FColor::Green,
-			FString::Printf(TEXT(">>>  胜者: %s  <<<"), *WinnerName));
+			TEXT(">>>  行动结束，评定已回传  <<<"));
 	}
 }

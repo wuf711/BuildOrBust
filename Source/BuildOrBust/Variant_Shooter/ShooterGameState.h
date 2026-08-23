@@ -28,6 +28,10 @@ public:
 	/** 胜者名（供 HUD 查询） */
 	const FString& GetWinnerName() const { return WinnerName; }
 
+	/** 本局种子(服务器开局生成，复制给所有端)；支撑"每日固定种子"等模式与可复现的节点/刷新。 */
+	int32 GetRunSeed() const { return RunSeed; }
+	void SetRunSeed(int32 In) { RunSeed = In; }
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
@@ -37,6 +41,10 @@ protected:
 
 	UPROPERTY(Replicated)
 	FString WinnerName;
+
+	/** 本局种子(0=未定；服务器 BeginPlay 生成非 0) */
+	UPROPERTY(Replicated)
+	int32 RunSeed = 0;
 
 private:
 	FTimerHandle ScoreboardTimer;

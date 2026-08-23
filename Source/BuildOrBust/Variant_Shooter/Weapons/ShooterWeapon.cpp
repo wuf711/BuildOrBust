@@ -61,6 +61,9 @@ void AShooterWeapon::BeginPlay()
 	// fill the first ammo clip
 	CurrentBullets = MagazineSize;
 
+	// 备弹开局统一 3 轮（蓝图武器的默认值各不相同，在这里拉平）
+	ApplyStartingReserve();
+
 	// attach the meshes to the owner
 	WeaponOwner->AttachWeaponMeshes(this);
 
@@ -148,7 +151,17 @@ void AShooterWeapon::Fire()
 	{
 		return;
 	}
-	
+
+	// 弹药耗尽(弹匣空+备弹空)：哑火，须回补给点花余烬补弹
+	if (IsOutOfAmmo())
+	{
+		if (WeaponOwner)
+		{
+			WeaponOwner->UpdateWeaponHUD(0, MagazineSize);
+		}
+		return;
+	}
+
 	// fire a projectile at the target
 	FireProjectile(WeaponOwner->GetWeaponTargetLocation());
 
@@ -213,10 +226,19 @@ void AShooterWeapon::FireProjectile(const FVector& TargetLocation)
 	// consume bullets
 	--CurrentBullets;
 
-	// if the clip is depleted, reload it
+	// 弹匣打空：从备弹装填(备弹为 0 则装不上，武器彻底哑火，须回补给点花余烬补弹)
 	if (CurrentBullets <= 0)
 	{
-		CurrentBullets = MagazineSize;
+		if (ReserveAmmo > 0)
+		{
+			const int32 Load = FMath::Min(MagazineSize, ReserveAmmo);
+			CurrentBullets = Load;
+			ReserveAmmo -= Load;
+		}
+		else
+		{
+			CurrentBullets = 0;
+		}
 	}
 
 	// update the weapon HUD

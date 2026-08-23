@@ -3,6 +3,7 @@
 
 #include "Variant_Shooter/ShooterGameMode.h"
 #include "Variant_Shooter/ShooterGameState.h"
+#include "BODPlayerState.h"
 #include "Variant_Shooter/ShooterHUD.h"
 #include "ShooterUI.h"
 #include "GameFramework/PlayerState.h"
@@ -13,6 +14,9 @@ AShooterGameMode::AShooterGameMode()
 {
 	// 多人同场竞技：使用自定义 GameState 做计分板
 	GameStateClass = AShooterGameState::StaticClass();
+	// 余烬(Cinder)等玩家级数据挂在自定义 PlayerState 上，必须显式指定，
+	// 否则引擎用默认 APlayerState，Cast<ABODPlayerState> 全部失败（表现：余烬不显示、补给失败）
+	PlayerStateClass = ABODPlayerState::StaticClass();
 	// 每个玩家各自的抬头显示（左上状态 + 右上得分对比）
 	HUDClass = AShooterHUD::StaticClass();
 }
@@ -71,7 +75,7 @@ void AShooterGameMode::TriggerWin()
 	}
 	bGameOver = true;
 	RecordMatchWinner();
-	BP_OnGameOver(true, PlayerScore);
+	// 蓝图结算 UMG 已弃用：结算画面由 ShooterHUD 的 C++ 面板绘制（渐暗+逐人战果+R重开）
 }
 
 void AShooterGameMode::TriggerLose()
@@ -82,7 +86,7 @@ void AShooterGameMode::TriggerLose()
 	}
 	bGameOver = true;
 	RecordMatchWinner();
-	BP_OnGameOver(false, PlayerScore);
+	// 蓝图结算 UMG 已弃用：败局画面同样走 ShooterHUD 的 C++ 面板
 }
 
 void AShooterGameMode::RecordMatchWinner()

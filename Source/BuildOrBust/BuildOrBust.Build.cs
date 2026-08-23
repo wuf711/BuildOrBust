@@ -20,6 +20,7 @@ public class BuildOrBust : ModuleRules
 			"GameplayStateTreeModule",
 			"UMG",
 			"Slate",
+			"SlateCore",
 			"Niagara"
 		});
 

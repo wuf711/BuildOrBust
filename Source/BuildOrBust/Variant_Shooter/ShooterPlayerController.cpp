@@ -52,19 +52,10 @@ void AShooterPlayerController::BeginPlay()
 			}
 		}
 
-		// create the bullet counter widget and add it to the screen
-		BulletCounterUI = CreateWidget<UShooterBulletCounterUI>(this, BulletCounterUIClass);
+		// 旧 UMG 弹药/血量条已由 ShooterHUD Canvas 版取代（所有使用处均判空，留空安全）
+		// BulletCounterUI = CreateWidget<UShooterBulletCounterUI>(this, BulletCounterUIClass);
+		// if (BulletCounterUI) { BulletCounterUI->AddToPlayerScreen(0); }
 
-		if (BulletCounterUI)
-		{
-			BulletCounterUI->AddToPlayerScreen(0);
-
-		} else {
-
-			UE_LOG(LogBuildOrBust, Error, TEXT("Could not spawn bullet counter widget."));
-
-		}
-		
 	}
 }
 
