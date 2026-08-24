@@ -13,7 +13,7 @@
 
 `hybrid_data.json` 是生成器输入，`k11_height_applied.json` 是当前关卡已应用地表的基线；两者必须与生成器一起版本化。OBJ、FBX、诊断图和授权纹理均为本地生成或本地依赖，不进入公共仓库。首次审计前必须先运行生成器，并按 `docs/03_本地资产依赖.md` 恢复所需纹理。
 
-生成器输出 `k11_greybox.obj` 作为地表掩体、废墟体块和地标的灰盒，输出 `k11_navfloor.obj` 作为地下连续底板。视觉 `k11_hexfield` 的墙柱负责从地下底板切出实际走廊。重导入时会删除旧城市柱场；精细建筑要等灰盒走测通过后再放回。地表底面与地道岩体包络保持分离。Recast 使用 World Partition 模式和 16384 Tile Pool；完成生成与重导入后必须运行 Builder，再执行新版审计。
+生成器输出 `k11_greybox.obj` 作为地表掩体、废墟体块和地标的灰盒，输出 `k11_soilfill.obj` 作为地表与洞顶之间的剖面显示填土，输出 `k11_navfloor.obj` 作为地下连续底板。`K11_SoilFill` 使用双面灰盒材质，只显示，不碰撞，也不参与导航。视觉 `k11_hexfield` 的墙柱负责从地下底板切出实际走廊。重导入时会删除旧城市柱场、重贴六个 PlayerStart；精细建筑要等灰盒走测通过后再放回。地表底面与地道岩体包络保持分离。Recast 使用 World Partition 模式和 16384 Tile Pool；完成生成与重导入后必须运行 Builder，再执行新版审计。
 
 `ue_reimport_k11.py` 会确保 `RecastNavMesh-Default` 启用 World Partition 导航，但不会假装一次异步 `RebuildNavigation` 已经完成。持久化导航必须使用 UE 自带的 `WorldPartitionNavigationDataBuilder`；普通编辑器启动阶段受 `AsyncLoadLock` 保护，直接发重建命令会被拒绝。
 

@@ -1332,31 +1332,56 @@ function writeGreybox(path) {
                   sx: sx, sy: sy, h: h, rot: +rot.toFixed(4) });
   }
 
-  // G0: tangent cover ring with broad openings facing each search branch.
-  for (let i = 0; i < 9; i++) {
-    const a = i * Math.PI * 2 / 9;
-    const open = GREYBOX.branches.some(b => Math.abs(angleDelta(a, b.a)) < 0.25);
+  // G0: an 18-part broken ring. From above it reads as a deliberate failed order;
+  // at eye height it is a cadence of low cover with six large breathing gaps.
+  for (let i = 0; i < 18; i++) {
+    const a = i * Math.PI * 2 / 18;
+    const open = GREYBOX.branches.some(b => Math.abs(angleDelta(a, b.a)) < 0.22);
     if (open) continue;
-    box('G0_Cover_' + i, Math.cos(a) * 3200, Math.sin(a) * 3200,
-        720, 190, (i & 1) ? 210 : 125, a + Math.PI / 2);
+    const r = 3150 + 170 * Math.sin(i * Math.PI * 2 / 6);
+    box('G0_Cover_' + i, Math.cos(a) * r, Math.sin(a) * r,
+        760 + 80 * (i % 3), 220, (i % 3 === 0) ? 240 : 135,
+        a + Math.PI / 2);
   }
 
-  // G1 is a broken occupation belt, not a surviving city. One low pair per branch
-  // establishes a corner and a fallback pocket without turning the horizon into towers.
+  // G1: paired flank stations repeat on the three routes. Their spacing, height and
+  // small rotational errors produce order from above while preserving route openings.
+  // Near pieces are human-scale cover; middle pieces read as ruined occupation;
+  // the last pieces become distant bearings in first person.
+  const stations = [
+    { d: 6500,  sx: 1100, sy: 520,  h: 170 },
+    { d: 8800,  sx: 1800, sy: 700,  h: 420 },
+    { d: 11200, sx: 1350, sy: 850,  h: 900 },
+    { d: 14000, sx: 2200, sy: 950,  h: 620 },
+    { d: 17800, sx: 1550, sy: 1100, h: 1700 },
+  ];
   for (let bi = 0; bi < GREYBOX.branches.length; bi++) {
     const b = GREYBOX.branches[bi];
-    const d = 7600 + bi * 450;
-    for (const side of [-1, 1]) {
-      const lateral = side * (b.half + 1450 + (bi & 1) * 350);
+    const branchStations = b.name === 'SINK' ? stations.slice(0, 4) : stations;
+    for (let si = 0; si < branchStations.length; si++) {
+      const st = branchStations[si], d = st.d + bi * 180;
       const ca = b.a + 0.06 * Math.sin(d / 4200 + b.a * 1.7);
-      const cx = Math.cos(ca) * d - Math.sin(ca) * lateral;
-      const cy = Math.sin(ca) * d + Math.cos(ca) * lateral;
-      const sx = 1900 + 250 * bi;
-      const sy = 900 + 180 * ((bi + (side > 0 ? 1 : 0)) & 1);
-      const h = 520 + 210 * ((bi + (side > 0 ? 1 : 0)) % 3);
-      box('G1_' + b.name + '_' + (side > 0 ? 'R' : 'L'),
-          cx, cy, sx, sy, h, ca + (side > 0 ? 0.13 : -0.16));
+      for (const side of [-1, 1]) {
+        const sy = st.sy + 90 * ((bi + si + (side > 0 ? 1 : 0)) & 1);
+        const lateral = side * (b.half + 520 + sy / 2);
+        const cx = Math.cos(ca) * d - Math.sin(ca) * lateral;
+        const cy = Math.sin(ca) * d + Math.cos(ca) * lateral;
+        const h = st.h + 100 * ((bi + si + (side > 0 ? 1 : 0)) % 3);
+        box('G1_' + b.name + '_S' + si + '_' + (side > 0 ? 'R' : 'L'),
+            cx, cy, st.sx + 120 * bi, sy, h,
+            ca + (side > 0 ? 0.07 : -0.09) + (si % 2 ? 0.05 : 0));
+      }
     }
+  }
+
+  // Six off-route piers hold the horizon together. Their radial symmetry is readable
+  // from the overview, while unequal heights stop the ground view becoming a toy set.
+  for (let i = 0; i < 6; i++) {
+    const a = 0.52 + i * Math.PI / 3;
+    const r = 19800 + (i % 2) * 650;
+    box('G2_OrderPier_' + i, Math.cos(a) * r, Math.sin(a) * r,
+        950 + 130 * (i % 3), 850, 1350 + 380 * ((i * 2) % 3),
+        a + Math.PI / 6);
   }
 
   // Faction ruins use the visual grammar already fixed by the K-11 documents.
@@ -1392,6 +1417,22 @@ function writeGreybox(path) {
     }
   }
 
+  let minRouteClearance = Infinity, worstRouteBlock = null;
+  for (const b of blocks.filter(q => q.name.startsWith('G1_'))) {
+    const branch = GREYBOX.branches.find(q => b.name.startsWith('G1_' + q.name + '_'));
+    if (!branch) continue;
+    const r = Math.hypot(b.x, b.y);
+    const ca = branch.a + 0.06 * Math.sin(r / 4200 + branch.a * 1.7);
+    const lateral = Math.abs(angleDelta(Math.atan2(b.y, b.x), ca)) * r;
+    const dr = angleDelta(b.rot, ca);
+    const crossHalf = 0.5 * (Math.abs(b.sx * Math.sin(dr)) + Math.abs(b.sy * Math.cos(dr)));
+    const clear = lateral - crossHalf - branch.half;
+    if (clear < minRouteClearance) {
+      minRouteClearance = clear;
+      worstRouteBlock = b.name;
+    }
+  }
+
   fs.writeFileSync(path, ['s off'].concat(V, F).join('\n'));
   fs.writeFileSync(OUT + '/k11_greybox_layout.json', JSON.stringify({
     version: 1,
@@ -1400,6 +1441,8 @@ function writeGreybox(path) {
     subregions: GREYBOX.subregions,
     sites: GREYBOX.sites,
     naturalTraces: ['jointed limestone', 'dry valleys', 'karst spring', 'sinkholes'],
+    checks: { routeClearanceCm: Math.round(minRouteClearance),
+              worstRouteBlock: worstRouteBlock },
     blocks: blocks,
   }, null, 2));
   const previewDir = OUT + '/_preview';
@@ -1446,7 +1489,63 @@ function writeGreybox(path) {
     '<text x="340" y="70" fill="#d1b45b">PREVIOUS OUTSIDERS</text>',
     '</g></svg>');
   fs.writeFileSync(previewDir + '/k11_greybox_plan.svg', svg.join('\n'));
-  return { blocks: blocks.length, verts: V.length, faces: blocks.length * 6 };
+  return { blocks: blocks.length, verts: V.length, faces: blocks.length * 6,
+           routeClearance: minRouteClearance, worstRouteBlock: worstRouteBlock };
+}
+
+// ---------------- visible soil fill greybox ----------------
+// A closed StaticMesh is solid for collision/boolean purposes, but UE only renders its
+// boundary. When the editor camera is flown inside that volume, back-face culling makes
+// it look hollow. These cheap closed cells give the inter-layer volume visible section
+// faces now and a separate material carrier for stratified soil later. They are look-only:
+// K11_Surface remains the sole terrain collision and navigation authority.
+function writeSoilFill(path) {
+  const CELL = 600, GAP = 18;
+  const x0 = UG.cx - UG.rx * 1.42, x1 = UG.cx + UG.rx * 1.42;
+  const y0 = UG.cy - UG.ry * 1.42, y1 = UG.cy + UG.ry * 1.42;
+  const V = [], F = [], cells = [];
+  let next = 1;
+  const box = (cx, cy, sx, sy, bot, top, name) => {
+    for (const z of [bot, top]) for (const q of [[-sx/2,-sy/2],[sx/2,-sy/2],[sx/2,sy/2],[-sx/2,sy/2]]) {
+      V.push('v ' + (cx + q[0]).toFixed(1) + ' ' + (-(cy + q[1])).toFixed(1)
+             + ' ' + z.toFixed(1));
+    }
+    const a = next; next += 8;
+    F.push('g ' + name);
+    F.push('f ' + a + ' ' + (a+1) + ' ' + (a+2) + ' ' + (a+3));
+    F.push('f ' + (a+4) + ' ' + (a+7) + ' ' + (a+6) + ' ' + (a+5));
+    F.push('f ' + a + ' ' + (a+4) + ' ' + (a+5) + ' ' + (a+1));
+    F.push('f ' + (a+1) + ' ' + (a+5) + ' ' + (a+6) + ' ' + (a+2));
+    F.push('f ' + (a+2) + ' ' + (a+6) + ' ' + (a+7) + ' ' + (a+3));
+    F.push('f ' + (a+3) + ' ' + (a+7) + ' ' + (a+4) + ' ' + a);
+  };
+  let skippedOpen = 0, skippedThin = 0;
+  for (let y = y0; y <= y1; y += CELL) for (let x = x0; x <= x1; x += CELL) {
+    if (ugField(x, y) <= 0.04) continue;
+    // Leave the authored routes empty. A whole cell is removed around each opening so a
+    // greybox corner cannot poke through a shaft or the oblique escape tunnel.
+    const opened = Math.hypot(x - ENTRY.x, y - ENTRY.y) < ENTRY.rTop + CELL * 0.8
+                || tunnelFloorNear(x, y) !== null;
+    if (opened) { skippedOpen++; continue; }
+    let bot = -1e9, top = 1e9;
+    for (const oy of [-0.45, 0, 0.45]) for (const ox of [-0.45, 0, 0.45]) {
+      const px = x + ox * CELL, py = y + oy * CELL;
+      bot = Math.max(bot, ugCeil(px, py) + UG_SKIN + 40);
+      top = Math.min(top, surface(px, py) - 80);
+    }
+    if (top - bot < 240) { skippedThin++; continue; }
+    const name = 'Soil_' + cells.length;
+    box(x, y, CELL - GAP, CELL - GAP, bot, top, name);
+    cells.push({ x: Math.round(x), y: Math.round(y), bottom: Math.round(bot),
+                 top: Math.round(top) });
+  }
+  fs.writeFileSync(path, ['s off'].concat(V, F).join('\n'));
+  fs.writeFileSync(OUT + '/k11_soilfill_layout.json', JSON.stringify({
+    version: 1, cell: CELL, gap: GAP, cells: cells,
+    skippedOpen: skippedOpen, skippedThin: skippedThin,
+  }, null, 2));
+  return { cells: cells.length, verts: V.length, faces: F.length,
+           skippedOpen: skippedOpen, skippedThin: skippedThin };
 }
 
 function auditGreyboxSurface() {
@@ -3090,6 +3189,7 @@ const dlt = writeDelta(OUT + '/k11_delta.json');
 // writeAccess 必须排在统一土体【前面】：密度场要减去逃生地道，
 // 而地道中心线是在 writeAccess 里算出来的。顺序反了土体会把地道填死。
 const acc = writeAccess(OUT + '/k11_f0access.obj');
+const soil = writeSoilFill(OUT + '/k11_soilfill.obj');
 const grey = writeGreybox(OUT + '/k11_greybox.obj');
 const greyAudit = auditGreyboxSurface();
 const ug = writeUnderground(OUT + '/k11_underground.obj');
@@ -3115,7 +3215,11 @@ console.log('surface relief ' + R(lo) + 'm .. ' + R(hi) + 'm   (total ' + R(hi -
 for (const k of ['G0','G1','G2','OUT'])
   console.log('  ' + k + '  ' + R(prov[k][0]) + ' .. ' + R(prov[k][1]) + ' m');
 console.log('greybox masses ' + grey.blocks + ' blocks, ' + grey.verts + ' verts, '
-  + grey.faces + ' quads');
+  + grey.faces + ' quads | route clearance ' + Math.round(grey.routeClearance)
+  + 'cm at ' + grey.worstRouteBlock);
+console.log('visible soil fill ' + soil.cells + ' closed cells, ' + soil.verts + ' verts, '
+  + soil.faces + ' quads | openings skipped ' + soil.skippedOpen
+  + ' | thin cells skipped ' + soil.skippedThin);
 console.log('  G0 floor range ' + R(greyAudit.coreLo) + '..' + R(greyAudit.coreHi)
   + 'm (spread ' + R(greyAudit.coreRange) + 'm) -> '
   + (greyAudit.coreRange <= 400 ? 'PASS' : 'FAIL'));

@@ -18,7 +18,7 @@ GROUND = {'K11_Surface', 'K11_Underground', 'K11_F0Access'}
 # obj -> uasset pairs that must be re-imported together
 # k11_water is no longer emitted: excluding the maze footprint and the entry apron from
 # the water mask left no cell below the water line.
-PAIRS = ['k11_surface', 'k11_greybox', 'k11_underground', 'k11_f0access',
+PAIRS = ['k11_surface', 'k11_soilfill', 'k11_greybox', 'k11_underground', 'k11_f0access',
          'k11_hexfield', 'k11_hexcut', 'k11_navfloor']
 MAZE_C = (-8880, -6144)          # altar
 MAZE_R = 8800                    # maze outer radius, cm
@@ -139,6 +139,40 @@ def a1b_surface_is_closed_solid():
            % (boundary, nonmanifold, len(surfaces), len(legacy_rock)))
 
 
+def a1c_player_starts_above_ground():
+    """Every initial/respawn point must stand above K11_Surface, never inside it."""
+    starts = [a for a in actors() if a.get_class().get_name() == 'PlayerStart']
+    ignore = _ignore_all_but({'K11_Surface'})
+    bad = []
+    for a in starts:
+        p = a.get_actor_location()
+        h = trace_z(p.x, p.y, p.z + 20, p.z - 400, ignore)
+        clearance = p.z - h[0] if h else None
+        if not h or h[1] != 'K11_Surface' or not (80 <= clearance <= 180):
+            bad.append((a.get_actor_label(), round(p.z),
+                        None if clearance is None else round(clearance),
+                        None if not h else h[1]))
+    report('A1c', 'PlayerStarts above ground', bool(starts) and not bad,
+           '%d safe start(s)' % len(starts) if starts and not bad else str(bad))
+
+
+def a1d_soil_fill_is_visual_only():
+    """Section-fill blocks must exist but never duplicate terrain collision or navigation."""
+    fills = [a for a in actors() if a.get_actor_label() == 'K11_SoilFill']
+    bad = []
+    for a in fills:
+        c = a.static_mesh_component
+        if (c.get_collision_enabled() != unreal.CollisionEnabled.NO_COLLISION
+                or c.get_editor_property('can_ever_affect_navigation')):
+            bad.append(a.get_actor_label())
+    layout = os.path.join(TOOLS, 'k11_soilfill_layout.json')
+    count = len(json.load(open(layout, encoding='utf-8')).get('cells', [])) \
+        if os.path.exists(layout) else 0
+    report('A1d', 'soil fill visual only', len(fills) == 1 and not bad and count >= 100,
+           '%d actor | %d closed cells | %d collision/nav violations'
+           % (len(fills), count, len(bad)))
+
+
 # ---------------------------------------------------------------- A2-A5: current surface greybox
 def _greybox_layout():
     p = os.path.join(TOOLS, 'k11_greybox_layout.json')
@@ -175,6 +209,18 @@ def a3_three_regions():
     report('A3', 'three surface regions', ok,
            'zones %s | branches %s | subregions %s'
            % (zones, sorted(branches), sorted(subregions)))
+
+
+def a3b_surface_route_clearance():
+    """First-batch greybox must preserve the authored route corridors."""
+    d = _greybox_layout() or {}
+    blocks = d.get('blocks', [])
+    clearance = d.get('checks', {}).get('routeClearanceCm', -9999)
+    ok = len(blocks) >= 55 and clearance >= 250
+    report('A3b', 'surface greybox route clearance', ok,
+           '%d blocks | minimum %dcm at %s'
+           % (len(blocks), clearance,
+              d.get('checks', {}).get('worstRouteBlock', 'unknown')))
 
 
 def a4_history_layers():
@@ -411,7 +457,8 @@ def x_material_scope():
            'ok (K11_HexField only)' if not bad_split else 'also on %s' % bad_split[:5])
     report('M2', 'M_K11_Ground purged', not ground_on,
            'ok' if not ground_on else '%d actors still use it' % len(ground_on))
-    grey_labels = {'K11_Surface', 'K11_Greybox', 'K11_Underground', 'K11_F0Access'}
+    grey_labels = {'K11_Surface', 'K11_SoilFill', 'K11_Greybox',
+                   'K11_Underground', 'K11_F0Access'}
     grey = {}
     for a in actors():
         if a.get_actor_label() not in grey_labels:
@@ -420,8 +467,11 @@ def x_material_scope():
         for cp in a.get_components_by_class(unreal.StaticMeshComponent):
             names.update(m.get_name() for m in cp.get_materials() if m)
         grey[a.get_actor_label()] = sorted(names)
+    expected_grey = {
+        'K11_SoilFill': 'M_K11_SoilFillGreybox',
+    }
     bad_grey = {k: v for k, v in grey.items()
-                if 'M_K11_Greybox' not in v}
+                if expected_grey.get(k, 'M_K11_Greybox') not in v}
     missing_grey = sorted(grey_labels - set(grey))
     report('M3', 'terrain uses greybox material', not bad_grey and not missing_grey,
            'ok' if not bad_grey and not missing_grey
@@ -562,8 +612,11 @@ def run():
     print('=' * 78)
     a1_not_stale()
     a1b_surface_is_closed_solid()
+    a1c_player_starts_above_ground()
+    a1d_soil_fill_is_visual_only()
     a2_surface_replaced()
     a3_three_regions()
+    a3b_surface_route_clearance()
     a4_history_layers()
     a5_greybox_transform()
     a6_maze_connected()

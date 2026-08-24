@@ -31,6 +31,7 @@ DEST = '/Game/Wasteland/Terrain'
 # happening in parallel and re-import must not stomp it.
 JOBS = [
     ('k11_surface.obj',     'k11_surface',     'K11_Surface',     '/Game/Wasteland/Materials/M_K11_Greybox'),
+    ('k11_soilfill.obj',    'k11_soilfill',    'K11_SoilFill',    '/Game/Wasteland/Materials/M_K11_SoilFillGreybox'),
     ('k11_greybox.obj',     'k11_greybox',     'K11_Greybox',     '/Game/Wasteland/Materials/M_K11_Greybox'),
     ('k11_underground.obj', 'k11_underground', 'K11_Underground', '/Game/Wasteland/Materials/M_K11_Greybox'),
     ('k11_f0access.obj',    'k11_f0access',    'K11_F0Access',    '/Game/Wasteland/Materials/M_K11_Greybox'),
@@ -51,10 +52,31 @@ REDRAPE_PREFIXES = ('BoB_Loot2_', 'BoB_Floodlight_', 'BoB_Lore_', 'BoB_Prop_',
                     'BoB_Beacon_', 'BoB_Hermit', 'BoB_SupplyStation')
 # Water is a look-only plane: it must never block a capsule or generate navmesh.
 # It used to be BlockAll + affects-navigation, sitting 7m above the maze floor.
-NO_COLLIDE = {'K11_Water', 'K11_FarField'}
-GREYBOX_MATERIAL_LABELS = {'K11_Surface', 'K11_Greybox', 'K11_Underground', 'K11_F0Access'}
+NO_COLLIDE = {'K11_Water', 'K11_FarField', 'K11_SoilFill'}
+GREYBOX_MATERIAL_LABELS = {'K11_Surface', 'K11_SoilFill', 'K11_Greybox',
+                           'K11_Underground', 'K11_F0Access'}
 
 _les = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+
+
+def ensure_soil_fill_material():
+    """Keep the section-fill material visually identical to the terrain greybox.
+
+    SoilFill is deliberately two-sided: an editor camera can sit inside any closed
+    fill cell, where a normal one-sided material would cull every surrounding face.
+    The shared terrain material stays one-sided.
+    """
+    src = '/Game/Wasteland/Materials/M_K11_Greybox'
+    dst = '/Game/Wasteland/Materials/M_K11_SoilFillGreybox'
+    mat = unreal.EditorAssetLibrary.load_asset(dst)
+    if not mat:
+        if not unreal.EditorAssetLibrary.duplicate_asset(src, dst):
+            print('    !! could not create M_K11_SoilFillGreybox')
+            return None
+        mat = unreal.EditorAssetLibrary.load_asset(dst)
+    mat.set_editor_property('two_sided', True)
+    unreal.EditorAssetLibrary.save_loaded_asset(mat, False)
+    return mat
 
 
 def import_obj(fn, name):
@@ -170,6 +192,42 @@ def redrape_surface_gameplay():
           % (moved, missed))
 
 
+def redrape_player_starts():
+    """Put every spawn capsule above the current terrain.
+
+    PlayerStarts are not retained props and were omitted from the first redrape pass.
+    After the terrain rose around the core, all six starts remained inside K11_Surface;
+    a pawn spawned inside one-sided complex collision and fell through the map.
+    """
+    all_actors = _les.get_all_level_actors()
+    surface = [a for a in all_actors if a.get_actor_label() == 'K11_Surface']
+    starts = [a for a in all_actors if a.get_class().get_name() == 'PlayerStart']
+    if len(surface) != 1 or not starts:
+        print('    !! PlayerStarts not draped: surface=%d starts=%d'
+              % (len(surface), len(starts)))
+        return
+    world = unreal.EditorLevelLibrary.get_editor_world()
+    ignore = [a for a in all_actors if a != surface[0]]
+    moved = missed = 0
+    for a in starts:
+        loc = a.get_actor_location()
+        hit = unreal.SystemLibrary.line_trace_single(
+            world, unreal.Vector(loc.x, loc.y, 12000),
+            unreal.Vector(loc.x, loc.y, -5000), unreal.TraceTypeQuery.TRACE_TYPE_QUERY1,
+            True, ignore, unreal.DrawDebugTrace.NONE, True)
+        if not hit:
+            missed += 1
+            continue
+        ground_z = hit.to_dict()['location'].z
+        capsules = a.get_components_by_class(unreal.CapsuleComponent)
+        half_height = max((c.get_scaled_capsule_half_height() for c in capsules), default=92.0)
+        a.modify()
+        a.set_actor_location(unreal.Vector(loc.x, loc.y, ground_z + half_height + 10),
+                             False, True)
+        moved += 1
+    print('    redraped %d PlayerStarts | missed %d' % (moved, missed))
+
+
 def run():
     # ---- 前置闸：编辑器世界没就绪就不许动 ----
     # 在 PIE 里、或地图没加载时，get_all_level_actors() 返回空。这种状态下脚本会把
@@ -185,6 +243,7 @@ def run():
     print('=' * 74)
     print('K-11 TARGETED RE-IMPORT')
     print('=' * 74)
+    ensure_soil_fill_material()
     unreal.SystemLibrary.execute_console_command(None, 'Interchange.FeatureFlags.Import.OBJ false')
     for lbl in DELETE_LABELS:
         for a in [x for x in _les.get_all_level_actors() if x.get_actor_label() == lbl]:
@@ -202,6 +261,7 @@ def run():
             continue
         repoint(lbl, m, mat)
     redrape_surface_gameplay()
+    redrape_player_starts()
     # Lvl_Shooter 是 World Partition 地图；Recast 仍保持模板默认的非分区模式时，
     # Navigation Data Builder 虽会写出 chunk actors，正常编辑器却继续读取旧整图 NavMesh。
     # 把导航数据本身切到分区模式，之后由官方 WorldPartitionNavigationDataBuilder
