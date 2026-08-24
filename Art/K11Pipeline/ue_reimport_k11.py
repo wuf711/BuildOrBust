@@ -30,24 +30,20 @@ DEST = '/Game/Wasteland/Terrain'
 # already in the level we KEEP whatever material it currently has -- material work is
 # happening in parallel and re-import must not stomp it.
 JOBS = [
-    ('k11_surface.obj',     'k11_surface',     'K11_Surface',     '/Engine/EngineMaterials/WorldGridMaterial'),
-    ('k11_greybox.obj',     'k11_greybox',     'K11_Greybox',     '/Engine/EngineMaterials/WorldGridMaterial'),
-    ('k11_underground.obj', 'k11_underground', 'K11_Underground', '/Engine/EngineMaterials/WorldGridMaterial'),
-    ('k11_f0access.obj',    'k11_f0access',    'K11_F0Access',    '/Engine/EngineMaterials/WorldGridMaterial'),
+    ('k11_surface.obj',     'k11_surface',     'K11_Surface',     '/Game/Wasteland/Materials/M_K11_Greybox'),
+    ('k11_greybox.obj',     'k11_greybox',     'K11_Greybox',     '/Game/Wasteland/Materials/M_K11_Greybox'),
+    ('k11_underground.obj', 'k11_underground', 'K11_Underground', '/Game/Wasteland/Materials/M_K11_Greybox'),
+    ('k11_f0access.obj',    'k11_f0access',    'K11_F0Access',    '/Game/Wasteland/Materials/M_K11_Greybox'),
     ('k11_hexfield.obj',    'k11_hexfield',    'K11_HexField',    '/Game/Wasteland/Scan/M_K11_MazeSplit'),
     ('k11_navfloor.obj',    'k11_navfloor',    'K11_NavFloor',    '/Game/Wasteland/FX/M_BoBInvisible'),
     ('k11_hexcut.obj',      'k11_hexcut',      'K11_HexCut',      '/Game/Wasteland/Materials/M_K11_Cut'),
     # 远景地形：只挡视线，不挡人，也不参与导航
     ('k11_farfield.obj',    'k11_farfield',    'K11_FarField',    '/Game/Wasteland/Scan/M_K11_Scan'),
-    # 统一岩体：一整块实心，减掉三个空腔（第二层洞腔 / 山顶巨坑 / 逃生地道）。
-    # 岩壁是减完剩下的边界，不是先造墙再补岩石。
-    # 取代 k11_rock_upper + k11_rock_lower + k11_crustfill 三个中间版本。
-    ('k11_rock.obj',        'k11_rock',        'K11_Rock',        '/Game/Wasteland/Scan/M_K11_Scan'),
 ]
 # k11_water 早已不再生成（迷宫足迹+入口排掉之后没有低于水线的格），旧的水面平面
 # 曾经泡住 56 个采样点的迷宫走廊，必须删掉而不是留着指向陈旧网格。
-# k11_crustfill 是"6 层叠板"那一版填充，已被等值面的 k11_rock_upper 取代。
-DELETE_LABELS = ['K11_Water', 'K11_CrustFill', 'K11_RockUpper', 'K11_RockLower']
+# k11_crustfill 和各版独立 rock actor 都已被 K11_Surface 统一闭合土体取代。
+DELETE_LABELS = ['K11_Water', 'K11_CrustFill', 'K11_Rock', 'K11_RockUpper', 'K11_RockLower']
 DELETE_PREFIXES = ('K11_Col_', 'BoB_City_', 'BoB_Fill_W',
                    'BoB_Ruin_', 'BoB_Deco_', 'BoB_Elem_', 'BoB_Fill_',
                    'BoB_CliffRock', 'SM_house')
@@ -56,7 +52,7 @@ REDRAPE_PREFIXES = ('BoB_Loot2_', 'BoB_Floodlight_', 'BoB_Lore_', 'BoB_Prop_',
 # Water is a look-only plane: it must never block a capsule or generate navmesh.
 # It used to be BlockAll + affects-navigation, sitting 7m above the maze floor.
 NO_COLLIDE = {'K11_Water', 'K11_FarField'}
-GREYBOX_MATERIAL_LABELS = {'K11_Surface', 'K11_Underground', 'K11_F0Access'}
+GREYBOX_MATERIAL_LABELS = {'K11_Surface', 'K11_Greybox', 'K11_Underground', 'K11_F0Access'}
 
 _les = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 
@@ -120,8 +116,15 @@ def repoint(label, mesh, mat_path):
         else:
             mat = unreal.EditorAssetLibrary.load_asset(mat_path)
             if mat:
-                for i in range(max(1, c.get_num_materials())):
+                a.modify()
+                c.modify()
+                mesh.modify()
+                slot_count = max(1, c.get_num_materials(),
+                                 len(mesh.get_editor_property('static_materials')))
+                for i in range(slot_count):
+                    mesh.set_material(i, mat)
                     c.set_material(i, mat)
+                unreal.EditorAssetLibrary.save_loaded_asset(mesh, False)
             shown = (mat.get_name() if mat else 'NONE') + ' (fallback)'
         if label == 'K11_NavFloor':
             # 专用碰撞/导航面不参与画面，只给角色和 Recast 提供一张连续表面。

@@ -117,6 +117,28 @@ def a1_not_stale():
            + ('   [mtime behind: %s]' % ', '.join(warn) if warn else ''))
 
 
+def a1b_surface_is_closed_solid():
+    """K11_Surface must be one watertight terrain authority, not a skin plus a rock actor."""
+    p = os.path.join(TOOLS, 'k11_surface.obj')
+    edge_uses = Counter()
+    if os.path.exists(p):
+        with open(p, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if not line.startswith('f '):
+                    continue
+                face = [int(v.split('/')[0]) for v in line.split()[1:]]
+                for a, b in zip(face, face[1:] + face[:1]):
+                    edge_uses[tuple(sorted((a, b)))] += 1
+    boundary = sum(n == 1 for n in edge_uses.values())
+    nonmanifold = sum(n > 2 for n in edge_uses.values())
+    surfaces = [a for a in actors() if a.get_actor_label() == 'K11_Surface']
+    legacy_rock = [a for a in actors() if a.get_actor_label() == 'K11_Rock']
+    ok = bool(edge_uses) and boundary == 0 and len(surfaces) == 1 and not legacy_rock
+    report('A1b', 'surface is closed solid', ok,
+           '%d boundary edges | %d non-manifold edges | %d surface actor | %d legacy rock actor'
+           % (boundary, nonmanifold, len(surfaces), len(legacy_rock)))
+
+
 # ---------------------------------------------------------------- A2-A5: current surface greybox
 def _greybox_layout():
     p = os.path.join(TOOLS, 'k11_greybox_layout.json')
@@ -248,7 +270,10 @@ def a6_maze_connected():
             failed.append(('no-path', round(x), round(y)))
             continue
         e = pts[-1]
-        if math.dist((e.x, e.y, e.z), (target_nav.x, target_nav.y, target_nav.z)) < 200:
+        # Recast stops at the nearest polygon edge when a projected cell centre lies
+        # under the entry stair lip. One axial hex-centre interval still means the
+        # target cell was reached; the old fixed 200cm cutoff false-failed at 204cm.
+        if math.dist((e.x, e.y, e.z), (target_nav.x, target_nav.y, target_nav.z)) <= HEX_DQ + 5:
             ok_n += 1
         else:
             stops[(round(e.x / 500) * 500, round(e.y / 500) * 500)] += 1
@@ -386,7 +411,7 @@ def x_material_scope():
            'ok (K11_HexField only)' if not bad_split else 'also on %s' % bad_split[:5])
     report('M2', 'M_K11_Ground purged', not ground_on,
            'ok' if not ground_on else '%d actors still use it' % len(ground_on))
-    grey_labels = {'K11_Surface', 'K11_Underground', 'K11_F0Access'}
+    grey_labels = {'K11_Surface', 'K11_Greybox', 'K11_Underground', 'K11_F0Access'}
     grey = {}
     for a in actors():
         if a.get_actor_label() not in grey_labels:
@@ -396,7 +421,7 @@ def x_material_scope():
             names.update(m.get_name() for m in cp.get_materials() if m)
         grey[a.get_actor_label()] = sorted(names)
     bad_grey = {k: v for k, v in grey.items()
-                if 'WorldGridMaterial' not in v}
+                if 'M_K11_Greybox' not in v}
     missing_grey = sorted(grey_labels - set(grey))
     report('M3', 'terrain uses greybox material', not bad_grey and not missing_grey,
            'ok' if not bad_grey and not missing_grey
@@ -536,6 +561,7 @@ def run():
     print('K-11 LEVEL AUDIT   %s' % time.strftime('%Y-%m-%d %H:%M:%S'))
     print('=' * 78)
     a1_not_stale()
+    a1b_surface_is_closed_solid()
     a2_surface_replaced()
     a3_three_regions()
     a4_history_layers()

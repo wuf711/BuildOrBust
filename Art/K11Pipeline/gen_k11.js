@@ -73,10 +73,9 @@ const GREYBOX = {
     ],
   },
 };
-// Rock skin under every walkable surface. A heightfield with no thickness is invisible
-// from underneath -- from inside the cave you look straight up through the ground, and
-// every prop above reads as a flat cut-out. Ground has to be a solid.
-const SKIN = 400;      // under the surface
+// Decorative cave surfaces stay clear of the authoritative terrain boundary.
+// K11_Surface itself is generated later as one closed volume; it is not a heightfield skin.
+const SKIN = 400;
 const UG_SKIN = 260;   // under the cave floor and above the cave roof
 const NX = Math.floor((X1 - X0) / CELL) + 1;
 const NY = Math.floor((Y1 - Y0) / CELL) + 1;
@@ -363,7 +362,7 @@ function surface(x, y) {
   // 实测寻路始终停在离出口几米处。现实里的平硐口不是顶穿的，是地面顺着坡挖下去。
   // 所以反过来做：地表沿着地道最后一段【往下让】，让出拱高，地道自然露天。
   // TUN_CENTRE 在 writeAccess 里才填，而 writeAccess 会调 surface() 求 EXIT 高度 ——
-  // 那时候它还是空的，这段不生效，正好避开循环依赖（writeAccess 已排在 writeSurface 前）。
+  // 那时候它还是空的，这段不生效，正好避开循环依赖（writeAccess 已排在统一土体前）。
   if (TUN_CENTRE.length) {
     const gx = Math.floor(x / TUN_CS), gy = Math.floor(y / TUN_CS);
     const rad = Math.ceil(1500 / TUN_CS);
@@ -1290,95 +1289,6 @@ function crustBottom(x, y) {
     b = Math.min(b, tz - TUN_CLEAR);
   }
   return b;
-}
-
-// Surface is only the visible ground shell.  Tunnel enclosure belongs to K11_Rock;
-// reusing crustBottom() here drags the surface underside down to tunnelFloor-TUN_CLEAR
-// and the transition triangles slice through the maze at player height.
-function surfaceBottom(x, y) {
-  const top = surface(x, y) - SKIN;
-  // 地表壳只保留自身厚度。旧版在出口 35m 半径内突然把底面拉到地道以下，
-  // 闭合壳的过渡边因此变成一道横穿地道的竖墙，导航正好断在边界上。
-  // 地道包裹交给 K11_Rock，破土接缝交给 F0Access 出口短接坡。
-  return ugField(x, y) > 0 ? Math.min(top, ugCeil(x, y) + UG_SKIN) : top;
-}
-
-function writeSurface(path) {
-  const L = [];
-  // 行距压了 √3/2，行数要按比例加回来，否则地图在 Y 方向短一截
-  const NYH = Math.ceil(NY / HEXROW);
-  for (let j = 0; j <= NYH; j++) for (let i = 0; i <= NX; i++) {
-    const x = latX(X0, i, j, CELL), y = latY(Y0, j, CELL);
-    L.push('v ' + x.toFixed(1) + ' ' + (-y).toFixed(1) + ' ' + surface(x, y).toFixed(1));
-    L.push('vt ' + (x / 800).toFixed(4) + ' ' + (y / 800).toFixed(4));
-  }
-  // Underside vertices. The ground is a SOLID with a skin, not a sheet: a zero-thickness
-  // heightfield is invisible from below, so standing in the cave you look up through the
-  // world. That is what read as "large areas of missing terrain".
-  const topCount = (NX + 1) * (NYH + 1);
-  for (let j = 0; j <= NYH; j++) for (let i = 0; i <= NX; i++) {
-    const x = latX(X0, i, j, CELL), y = latY(Y0, j, CELL);
-    L.push('v ' + x.toFixed(1) + ' ' + (-y).toFixed(1) + ' ' + surfaceBottom(x, y).toFixed(1));
-    L.push('vt ' + (x / 800).toFixed(4) + ' ' + (y / 800).toFixed(4));
-  }
-
-  const vid = (i, j) => j * (NX + 1) + i + 1;
-  const bid = (i, j) => topCount + j * (NX + 1) + i + 1;
-  L.push('s 1');
-
-  // Cut the collapses OUT of the surface, and remember which cells were cut so the
-  // exposed edges can be capped afterwards.
-  const cut = [];
-  let holes = 0;
-  for (let j = 0; j < NYH; j++) {
-    cut.push(new Array(NX).fill(false));
-    for (let i = 0; i < NX; i++) {
-      const cx = (latX(X0, i, j, CELL) + latX(X0, i + 1, j + 1, CELL)) * 0.5;
-      const cy = (latY(Y0, j, CELL) + latY(Y0, j + 1, CELL)) * 0.5;
-      // 逃生地道后段已经离开主洞腔，ugField 会回到 0。若仍把开口绑定
-      // ugField，地表薄壳会横压在地道顶上，只剩 1.2~1.7m 净空。
-      if (ugOpen(cx, cy)) { cut[j][i] = true; holes++; }
-    }
-  }
-
-  for (let j = 0; j < NYH; j++) for (let i = 0; i < NX; i++) {
-    if (cut[j][i]) { continue; }
-    const a = vid(i, j), b = vid(i + 1, j), c = vid(i + 1, j + 1), d = vid(i, j + 1);
-    const e = bid(i, j), f = bid(i + 1, j), g = bid(i + 1, j + 1), h = bid(i, j + 1);
-    // 对角线随行奇偶翻转。不翻的话所有三角形朝同一个方向倒，晶格退化成一排斜条纹，
-    // 六边形对称性就没了 —— 折线又会重新沿一个固定方向走。
-    if (j & 1) {
-      L.push('f ' + a + '/' + a + ' ' + c + '/' + c + ' ' + b + '/' + b);
-      L.push('f ' + a + '/' + a + ' ' + d + '/' + d + ' ' + c + '/' + c);
-      L.push('f ' + e + '/' + e + ' ' + f + '/' + f + ' ' + g + '/' + g);
-      L.push('f ' + e + '/' + e + ' ' + g + '/' + g + ' ' + h + '/' + h);
-    } else {
-      L.push('f ' + a + '/' + a + ' ' + d + '/' + d + ' ' + b + '/' + b);
-      L.push('f ' + b + '/' + b + ' ' + d + '/' + d + ' ' + c + '/' + c);
-      L.push('f ' + e + '/' + e + ' ' + f + '/' + f + ' ' + h + '/' + h);
-      L.push('f ' + f + '/' + f + ' ' + g + '/' + g + ' ' + h + '/' + h);
-    }
-  }
-
-  // Cap every exposed edge: around each hole, and around the whole map rim. Without the
-  // caps the skin is just a second sheet and the cut edges show as paper-thin slots.
-  const solid = (i, j) => (i >= 0 && j >= 0 && i < NX && j < NYH && !cut[j][i]);
-  let caps = 0;
-  const wall = (t0, t1, b0, b1) => {
-    L.push('f ' + t0 + '/' + t0 + ' ' + t1 + '/' + t1 + ' ' + b1 + '/' + b1);
-    L.push('f ' + t0 + '/' + t0 + ' ' + b1 + '/' + b1 + ' ' + b0 + '/' + b0);
-    caps++;
-  };
-  for (let j = 0; j < NYH; j++) for (let i = 0; i < NX; i++) {
-    if (!solid(i, j)) { continue; }
-    if (!solid(i + 1, j)) { wall(vid(i + 1, j), vid(i + 1, j + 1), bid(i + 1, j), bid(i + 1, j + 1)); }
-    if (!solid(i - 1, j)) { wall(vid(i, j + 1), vid(i, j), bid(i, j + 1), bid(i, j)); }
-    if (!solid(i, j + 1)) { wall(vid(i + 1, j + 1), vid(i, j + 1), bid(i + 1, j + 1), bid(i, j + 1)); }
-    if (!solid(i, j - 1)) { wall(vid(i, j), vid(i + 1, j), bid(i, j), bid(i + 1, j)); }
-  }
-
-  fs.writeFileSync(path, L.join('\n'));
-  return { verts: topCount * 2, holes: holes, caps: caps, rows: NYH };
 }
 
 // ---------------- surface greybox masses ----------------
@@ -2609,7 +2519,7 @@ function writeUnderground(path) {
   const push = (x, y, z) => { V.push('v ' + x.toFixed(1) + ' ' + (-y).toFixed(1) + ' ' + z.toFixed(1)); return V.length; };
   let QPAR = 0;   // 由外层循环按行号设置
   const quad = (a, b, c, d) => {
-    // 对角线随行奇偶翻转，和 writeSurface 一致。不翻的话所有三角形朝同一个方向倒，
+    // 对角线随行奇偶翻转，和地表晶格一致。不翻的话所有三角形朝同一个方向倒，
     // 晶格退化成一排斜条纹，六边形对称性就没了，折线又会沿一个固定方向走。
     if (QPAR) { F.push('f ' + a + ' ' + c + ' ' + b); F.push('f ' + a + ' ' + d + ' ' + c); }
     else      { F.push('f ' + a + ' ' + d + ' ' + b); F.push('f ' + b + ' ' + d + ' ' + c); }
@@ -2978,17 +2888,19 @@ function chamberInside(x, y, z) {
   return Math.min(ugCeil(x, y) + 120 - z, z - bot, f * 6000);
 }
 
-// ---------------- 统一岩体：一块实心，减三个空腔 ----------------
-// 剖面图上的那三刀。岩壁不是造出来的，是减完剩下的边界。
-// 顶面保持在 surface - SKIN：地表那张皮(k11_surface)继续负责可见地貌和城柱落地，
-// 这块岩体只管把它下面到洞腔之间填成实的 —— 那 32m 的假空腔就是这么来的。
+// ---------------- 统一土体：一块闭合体，减三个空腔 ----------------
+// K11_Surface 是唯一地形权威。外边界是地表、地图侧壁和底岩；内部只减掉
+// 第二层洞腔、山顶巨坑和逃生地道。静态网格没有“填充像素”，闭合边界就是实体。
 const ROCK_BASE = -5180;    // 迷宫地面 -3680 再往下 15m
-function densRockSolid(x, y, z) {
-  let d = Math.min(surface(x, y) - SKIN - z, z - ROCK_BASE);
+function densSurfaceSolid(x, y, z) {
+  // 这一项把地图四周也纳入有符号距离。采样盒会在四周各多垫两格，
+  // 所以等值面能生成封闭侧壁，不会在体素边界被截成开口网格。
+  const footprint = Math.min(x - X0, X1 - x, y - Y0, Y1 - y);
+  let d = Math.min(surface(x, y) - z, z - ROCK_BASE, footprint);
   if (d <= -ROCK_CS * 2) { return d; }                 // 早退，省掉后面的距离计算
   d = Math.min(d, -chamberInside(x, y, z));                                        // 减第二层洞腔
   // 西北六边形尖角略超出椭圆洞腔，等值岩体会在玩家高度围住最外侧支路。
-  // 只从 K11_Rock 中挖这个局部净空，不把它加入 ugField；后者会改变出口地道的
+  // 只从 K11_Surface 中挖这个局部净空，不把它加入 ugField；后者会改变出口地道的
   // 高度场与寻路。椭圆横截面覆盖 A6 实测的 x=-16530..-15500/y=-4000..-1400。
   const westR = 1 - Math.hypot((x + 16050) / 2200, (y + 2700) / 2800);
   const westClear = Math.min(westR * 2200, z - (ENTRY.floor - 500), -1700 - z);
@@ -2999,7 +2911,7 @@ function densRockSolid(x, y, z) {
 }
 
 // 通用等值面（surface nets），密度 >0 为实体
-function isoZone(path, dens, x0, y0, z0, NIx, NIy, NIz, CS) {
+function isoZone(path, dens, x0, y0, z0, NIx, NIy, NIz, CS, weld = false) {
   const V = [], F = [];
   const at = (i, j) => i * NIy + j;
   const cellId = (i, j) => i * (NIy - 1) + j;
@@ -3054,24 +2966,40 @@ function isoZone(path, dens, x0, y0, z0, NIx, NIy, NIz, CS) {
       }
     }
   }
-  fs.writeFileSync(path, V.concat(F).join('\n'));
-  return { verts: V.length, quads: F.length, grid: NIx + 'x' + NIy + 'x' + NIz };
+  if (!weld) {
+    fs.writeFileSync(path, V.concat(F).join('\n'));
+    return { verts: V.length, quads: F.length, grid: NIx + 'x' + NIy + 'x' + NIz };
+  }
+  // Surface Nets can place two neighbouring cell vertices at the same rounded OBJ
+  // coordinate. UE drops the resulting zero-area triangles during import, which makes
+  // source and asset counts disagree. Weld exact duplicates and discard collapsed faces.
+  const unique = new Map(), remap = new Int32Array(V.length + 1), WV = [];
+  for (let i = 0; i < V.length; i++) {
+    const key = V[i];
+    let id = unique.get(key);
+    if (!id) { WV.push(key); id = WV.length; unique.set(key, id); }
+    remap[i + 1] = id;
+  }
+  const WF = [];
+  for (const line of F) {
+    const ids = line.split(' ').slice(1).map(v => remap[Number(v)]);
+    const clean = ids.filter((v, i) => ids.indexOf(v) === i);
+    if (clean.length >= 3) { WF.push('f ' + clean.join(' ')); }
+  }
+  fs.writeFileSync(path, WV.concat(WF).join('\n'));
+  return { verts: WV.length, quads: WF.length, grid: NIx + 'x' + NIy + 'x' + NIz,
+           welded: V.length - WV.length, collapsed: F.length - WF.length };
 }
 
-// 岩体必须在【所有 write* 跑完之后】才能生成：densRockSolid 要用 TUN_CENTRE
+// 统一土体必须在【所有 write* 跑完之后】才能生成：densSurfaceSolid 要用 TUN_CENTRE
 // （writeAccess 里才填）。第一版排在 writeAccess 前面，TUN_GRID 是 null，
 // tunnelDist3 一律返回 1e9 —— 隧道根本没被减掉，岩层是实的、隧道埋在里面。
 // z 范围 -25.8m..50.5m 就是证据（完全没受隧道影响）。
 //
-// 范围取"洞腔外接盒 ∪ 地道走廊"：这两处才有需要填的假空腔，地图别处地表皮下
-// 本来就贴着地面，没有腔。
-function buildRockSolid(path) {
-  let bx0 = UG.cx - UG.rx * 1.45, bx1 = UG.cx + UG.rx * 1.45;
-  let by0 = UG.cy - UG.ry * 1.45, by1 = UG.cy + UG.ry * 1.45;
-  for (const p of TUN_CENTRE) {
-    bx0 = Math.min(bx0, p[0] - TUN_BORE * 3); bx1 = Math.max(bx1, p[0] + TUN_BORE * 3);
-    by0 = Math.min(by0, p[1] - TUN_BORE * 3); by1 = Math.max(by1, p[1] + TUN_BORE * 3);
-  }
+// 范围覆盖整张可玩地图，并在 X/Y/Z 外侧留负密度垫层供等值面封边。
+function buildSurfaceSolid(path) {
+  const bx0 = X0 - ROCK_CS * 2, bx1 = X1 + ROCK_CS * 2;
+  const by0 = Y0 - ROCK_CS * 2, by1 = Y1 + ROCK_CS * 2;
   let zh = -1e9;
   for (let x = bx0; x <= bx1; x += 600) for (let y = by0; y <= by1; y += 600) {
     zh = Math.max(zh, surface(x, y) - SKIN);
@@ -3081,7 +3009,7 @@ function buildRockSolid(path) {
   const NIx = Math.ceil((bx1 - bx0) / ROCK_CS) + 1;
   const NIy = Math.ceil((by1 - by0) / ROCK_CS) + 1;
   const NIz = Math.ceil((zh - zl) / ROCK_CS) + 1;
-  const r = isoZone(path, densRockSolid, bx0, by0, zl, NIx, NIy, NIz, ROCK_CS);
+  const r = isoZone(path, densSurfaceSolid, bx0, by0, zl, NIx, NIy, NIz, ROCK_CS, true);
   r.zLo = zl; r.zHi = zh;
   return r;
 }
@@ -3151,7 +3079,7 @@ function writeDelta(path) {
     JSON.stringify({ nx: NX, ny: NY, cell: CELL, z: cur }));
   return { mn: mn, mx: mx, rel: prev ? 'previous K-11 surface' : 'original gY2' };
 }
-// EXIT_NATURAL_Z 必须在 writeSurface / writeAccess 之前算好：这两者都会读它
+// EXIT_NATURAL_Z 必须在 writeAccess / 统一土体之前算好：这两者都会读它
 NOPIT = true;
 EXIT_NATURAL_Z = surface(EXIT.x, EXIT.y);
 NOPIT = false;
@@ -3159,21 +3087,17 @@ NOPIT = false;
 const dlt = writeDelta(OUT + '/k11_delta.json');
 
 // ---------------- report ----------------
-// writeAccess 必须排在 writeSurface 【前面】：地壳底面(crustBottom)要把逃生地道包进去，
-// 而地道中心线是在 writeAccess 里算出来的。顺序反了地壳就不知道地道在哪，
-// 地道会吊在地壳底下的虚空里（UE 截图实测过）。
-// writeAccess 不依赖 writeSurface 的任何输出，换序是安全的。
+// writeAccess 必须排在统一土体【前面】：密度场要减去逃生地道，
+// 而地道中心线是在 writeAccess 里算出来的。顺序反了土体会把地道填死。
 const acc = writeAccess(OUT + '/k11_f0access.obj');
-const sres = writeSurface(OUT + '/k11_surface.obj');
-const nv = sres.verts;
 const grey = writeGreybox(OUT + '/k11_greybox.obj');
 const greyAudit = auditGreyboxSurface();
 const ug = writeUnderground(OUT + '/k11_underground.obj');
 const hex = writeHexField(OUT + '/k11_hexfield.obj', OUT + '/k11_hexdeco.obj',
                           OUT + '/k11_navfloor.obj');
 const twr = writeTowers(OUT + '/k11_towers.obj');
-// 分区实体岩层必须排在这里：要等 writeAccess 把 TUN_CENTRE 填好
-const rock = buildRockSolid(OUT + '/k11_rock.obj');
+// 统一土体必须排在这里：要等 writeAccess 把 TUN_CENTRE 填好
+const terrain = buildSurfaceSolid(OUT + '/k11_surface.obj');
 
 let lo = 1e9, hi = -1e9;
 const prov = { G0: [1e9, -1e9], G1: [1e9, -1e9], G2: [1e9, -1e9], OUT: [1e9, -1e9] };
@@ -3185,9 +3109,8 @@ for (let j = 0; j <= NY; j += 2) for (let i = 0; i <= NX; i += 2) {
   prov[k][0] = Math.min(prov[k][0], z); prov[k][1] = Math.max(prov[k][1], z);
 }
 const R = v => (v / 100).toFixed(1);
-console.log('surface grid ' + NX + 'x' + NY + ' @' + CELL + 'cm -> ' + nv + ' verts, '
-  + sres.holes + ' cells cut open over the collapses ('
-  + Math.round(sres.holes * CELL * CELL / 10000) + ' m2)');
+console.log('surface solid ' + terrain.grid + ' @' + ROCK_CS + 'cm -> '
+  + terrain.verts + ' verts, ' + terrain.quads + ' quads');
 console.log('surface relief ' + R(lo) + 'm .. ' + R(hi) + 'm   (total ' + R(hi - lo) + 'm)');
 for (const k of ['G0','G1','G2','OUT'])
   console.log('  ' + k + '  ' + R(prov[k][0]) + ' .. ' + R(prov[k][1]) + ' m');
@@ -3324,6 +3247,6 @@ console.log('--- 远景地形 (无碰撞，只挡视线) ---');
 console.log('  ' + farf.cells + ' 格 @' + FAR_CELL + 'cm, ' + farf.tris + ' 三角, '
   + '总跨度 ' + R(farf.span[0]) + 'm x ' + R(farf.span[1]) + 'm  -> k11_farfield.obj');
 
-console.log('--- 统一岩体（实心 − 洞腔 − 巨坑 − 地道）---');
-console.log('  体素 ' + rock.grid + ' @' + ROCK_CS + 'cm, z ' + R(rock.zLo) + 'm..' + R(rock.zHi) + 'm');
-console.log('  ' + rock.verts + ' verts, ' + rock.quads + ' quads  -> k11_rock.obj');
+console.log('--- K11_Surface 统一土体（闭合体 − 洞腔 − 巨坑 − 地道）---');
+console.log('  体素 ' + terrain.grid + ' @' + ROCK_CS + 'cm, z ' + R(terrain.zLo) + 'm..' + R(terrain.zHi) + 'm');
+console.log('  ' + terrain.verts + ' verts, ' + terrain.quads + ' quads  -> k11_surface.obj');
