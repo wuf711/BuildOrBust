@@ -20,7 +20,7 @@ HexField, and M_K11_Ground is not used at all.
 
 Run from the loaded project with Unreal Editor's Execute Python Script command.
 """
-import unreal, os, time
+import unreal, os, time, math
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 DEST = '/Game/Wasteland/Terrain'
@@ -30,9 +30,10 @@ DEST = '/Game/Wasteland/Terrain'
 # already in the level we KEEP whatever material it currently has -- material work is
 # happening in parallel and re-import must not stomp it.
 JOBS = [
-    ('k11_surface.obj',     'k11_surface',     'K11_Surface',     '/Game/Wasteland/Scan/M_K11_Basalt'),
-    ('k11_underground.obj', 'k11_underground', 'K11_Underground', '/Game/Wasteland/Scan/M_K11_Basalt'),
-    ('k11_f0access.obj',    'k11_f0access',    'K11_F0Access',    '/Game/Wasteland/Scan/M_K11_Basalt'),
+    ('k11_surface.obj',     'k11_surface',     'K11_Surface',     '/Engine/EngineMaterials/WorldGridMaterial'),
+    ('k11_greybox.obj',     'k11_greybox',     'K11_Greybox',     '/Engine/EngineMaterials/WorldGridMaterial'),
+    ('k11_underground.obj', 'k11_underground', 'K11_Underground', '/Engine/EngineMaterials/WorldGridMaterial'),
+    ('k11_f0access.obj',    'k11_f0access',    'K11_F0Access',    '/Engine/EngineMaterials/WorldGridMaterial'),
     ('k11_hexfield.obj',    'k11_hexfield',    'K11_HexField',    '/Game/Wasteland/Scan/M_K11_MazeSplit'),
     ('k11_navfloor.obj',    'k11_navfloor',    'K11_NavFloor',    '/Game/Wasteland/FX/M_BoBInvisible'),
     ('k11_hexcut.obj',      'k11_hexcut',      'K11_HexCut',      '/Game/Wasteland/Materials/M_K11_Cut'),
@@ -47,9 +48,15 @@ JOBS = [
 # 曾经泡住 56 个采样点的迷宫走廊，必须删掉而不是留着指向陈旧网格。
 # k11_crustfill 是"6 层叠板"那一版填充，已被等值面的 k11_rock_upper 取代。
 DELETE_LABELS = ['K11_Water', 'K11_CrustFill', 'K11_RockUpper', 'K11_RockLower']
+DELETE_PREFIXES = ('K11_Col_', 'BoB_City_', 'BoB_Fill_W',
+                   'BoB_Ruin_', 'BoB_Deco_', 'BoB_Elem_', 'BoB_Fill_',
+                   'BoB_CliffRock', 'SM_house')
+REDRAPE_PREFIXES = ('BoB_Loot2_', 'BoB_Floodlight_', 'BoB_Lore_', 'BoB_Prop_',
+                    'BoB_Beacon_', 'BoB_Hermit', 'BoB_SupplyStation')
 # Water is a look-only plane: it must never block a capsule or generate navmesh.
 # It used to be BlockAll + affects-navigation, sitting 7m above the maze floor.
 NO_COLLIDE = {'K11_Water', 'K11_FarField'}
+GREYBOX_MATERIAL_LABELS = {'K11_Surface', 'K11_Underground', 'K11_F0Access'}
 
 _les = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 
@@ -106,7 +113,7 @@ def repoint(label, mesh, mat_path):
         if not collide:
             c.set_collision_profile_name('NoCollision')
             c.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
-        if keep and not fresh:
+        if keep and not fresh and label not in GREYBOX_MATERIAL_LABELS:
             for i in range(c.get_num_materials()):
                 c.set_material(i, keep[min(i, len(keep) - 1)])
             shown = keep[0].get_name() + ' (kept)'
@@ -124,6 +131,40 @@ def repoint(label, mesh, mat_path):
         print('    %-16s tris=%-7d centre=(%.0f,%.0f,%.0f) extent=(%.0f,%.0f,%.0f) mat=%s%s'
               % (label, mesh.get_num_triangles(0), o.x, o.y, o.z, e.x, e.y, e.z,
                  shown, '' if collide else '  [NoCollision/no-nav]'))
+
+
+def redrape_surface_gameplay():
+    """Keep authored X/Y, but put retained gameplay and story actors on the new surface."""
+    all_actors = _les.get_all_level_actors()
+    surface = [a for a in all_actors if a.get_actor_label() == 'K11_Surface']
+    if len(surface) != 1:
+        print('    !! retained surface actors not draped: expected one K11_Surface')
+        return
+    world = unreal.EditorLevelLibrary.get_editor_world()
+    ignore = [a for a in all_actors if a != surface[0]]
+    moved = missed = 0
+    for a in all_actors:
+        label = a.get_actor_label()
+        loc = a.get_actor_location()
+        if not label.startswith(REDRAPE_PREFIXES):
+            continue
+        if math.hypot(loc.x, loc.y) > 30000 or loc.z < -1000:
+            continue
+        hit = unreal.SystemLibrary.line_trace_single(
+            world, unreal.Vector(loc.x, loc.y, 12000),
+            unreal.Vector(loc.x, loc.y, -5000), unreal.TraceTypeQuery.TRACE_TYPE_QUERY1,
+            True, ignore, unreal.DrawDebugTrace.NONE, True)
+        if not hit:
+            missed += 1
+            continue
+        ground_z = hit.to_dict()['location'].z
+        origin, extent = a.get_actor_bounds(False)
+        a.set_actor_location(unreal.Vector(loc.x, loc.y,
+                                           loc.z + ground_z - (origin.z - extent.z) + 2),
+                             False, True)
+        moved += 1
+    print('    redraped %d retained surface gameplay/story actors | missed %d'
+          % (moved, missed))
 
 
 def run():
@@ -146,12 +187,18 @@ def run():
         for a in [x for x in _les.get_all_level_actors() if x.get_actor_label() == lbl]:
             _les.destroy_actor(a)
             print('    removed %s (generator no longer emits it)' % lbl)
+    old_surface = [a for a in _les.get_all_level_actors()
+                   if a.get_actor_label().startswith(DELETE_PREFIXES)]
+    for a in old_surface:
+        _les.destroy_actor(a)
+    print('    removed %d superseded surface actors for the greybox' % len(old_surface))
     for fn, nm, lbl, mat in JOBS:
         m = import_obj(fn, nm)
         if not m:
             print('    !! import failed: %s' % fn)
             continue
         repoint(lbl, m, mat)
+    redrape_surface_gameplay()
     # Lvl_Shooter 是 World Partition 地图；Recast 仍保持模板默认的非分区模式时，
     # Navigation Data Builder 虽会写出 chunk actors，正常编辑器却继续读取旧整图 NavMesh。
     # 把导航数据本身切到分区模式，之后由官方 WorldPartitionNavigationDataBuilder
@@ -179,4 +226,5 @@ def run():
     print('=' * 74)
 
 
-run()
+if globals().get('K11_AUTORUN', True):
+    run()

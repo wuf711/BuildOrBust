@@ -9,11 +9,11 @@
 3. 对主地图运行 `WorldPartitionNavigationDataBuilder`
 4. 执行 `ue_audit_k11.py`
 
-审计必须全量运行。A6 已从随机 60 格升级为全部走廊格；2026‑08‑23 当前基线为 1994 / 1994（100%），完整审计 16 / 16。
+审计必须全量运行。A6 已从随机 60 格升级为全部走廊格；2026‑08‑23 的旧地形基线为 1994 / 1994（100%）、完整审计 16 / 16。2026‑08‑24 起地表进入三块区域灰盒重做，这组结果只用于检查垂直骨架有没有回退。
 
 `hybrid_data.json` 是生成器输入，`k11_height_applied.json` 是当前关卡已应用地表的基线；两者必须与生成器一起版本化。OBJ、FBX、诊断图和授权纹理均为本地生成或本地依赖，不进入公共仓库。首次审计前必须先运行生成器，并按 `docs/03_本地资产依赖.md` 恢复所需纹理。
 
-生成器输出 `k11_navfloor.obj` 作为连续底板，视觉 `k11_hexfield` 的墙柱负责从底板切出实际走廊。地表底面与地道岩体包络已分离，西北边缘的岩体侵入也在 Rock 布尔层局部清除。Recast 使用 World Partition 模式和 16384 Tile Pool；完成生成与重导入后必须运行 Builder，再以 16 / 16 审计作为封口条件。
+生成器输出 `k11_greybox.obj` 作为地表掩体、废墟体块和地标的灰盒，输出 `k11_navfloor.obj` 作为地下连续底板。视觉 `k11_hexfield` 的墙柱负责从地下底板切出实际走廊。重导入时会删除旧城市柱场；精细建筑要等灰盒走测通过后再放回。地表底面与地道岩体包络保持分离。Recast 使用 World Partition 模式和 16384 Tile Pool；完成生成与重导入后必须运行 Builder，再执行新版审计。
 
 `ue_reimport_k11.py` 会确保 `RecastNavMesh-Default` 启用 World Partition 导航，但不会假装一次异步 `RebuildNavigation` 已经完成。持久化导航必须使用 UE 自带的 `WorldPartitionNavigationDataBuilder`；普通编辑器启动阶段受 `AsyncLoadLock` 保护，直接发重建命令会被拒绝。
 

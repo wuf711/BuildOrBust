@@ -44,6 +44,35 @@ let NOPIT = false;
 
 const X0 = D.X0, X1 = D.X1, Y0 = D.Z0, Y1 = D.Z1;
 const CELL = 200;
+// 2026-08-24 greybox reset. The playable surface is three readable regions instead
+// of five literal radial provinces. The old P0..P4 vocabulary stays as an art guide;
+// these dimensions drive navigation, combat spacing and first-person silhouettes.
+const GREYBOX = {
+  coreR: 5000,
+  ruinsR: 13000,
+  dangerR: 22000,
+  branches: [
+    { name: 'SINK',  a: Math.atan2(-14315, -9966), half: 1900, z: 200 },
+    { name: 'RUINS', a: 0.18,                     half: 2200, z: 520 },
+    { name: 'RIDGE', a: 2.10,                     half: 1800, z: 780 },
+  ],
+  subregions: {
+    beaconBasin: { zone: 'G0', role: 'defence hub and retreat ring' },
+    dryGorge: { zone: 'G1/G2 SINK', role: 'resistance route and collapse approach' },
+    springRuins: { zone: 'G1 RUINS', role: 'acceptance precinct and main salvage loop' },
+    jointRidge: { zone: 'G1/G2 RIDGE', role: 'pre-civilisation limestone and long sightline' },
+    hiddenEgress: { zone: 'G2', role: 'one-way escape return and outsider trace' },
+  },
+  sites: {
+    acceptance: { x: 9927, y: 5771 },
+    resistance: { x: -7600, y: -9800 },
+    outsiders: [
+      { name: 'A_PACK', x: 11200, y: 5200 },
+      { name: 'B_MAP', x: -16400, y: 11800 },
+      { name: 'C_TIMER', x: -13500, y: -11500 },
+    ],
+  },
+};
 // Rock skin under every walkable surface. A heightfield with no thickness is invisible
 // from underneath -- from inside the cave you look straight up through the ground, and
 // every prop above reads as a flat cut-out. Ground has to be a solid.
@@ -191,42 +220,68 @@ function towerField(x, y) {
   return best;
 }
 
+function angleDelta(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+function greyboxBranch(x, y) {
+  const r = Math.hypot(x, y);
+  const a = Math.atan2(y, x);
+  let best = null;
+  for (const b of GREYBOX.branches) {
+    const bend = 0.10 * Math.sin(r / 4200 + b.a * 1.7);
+    const side = Math.abs(Math.sin(angleDelta(a, b.a + bend)) * r);
+    const width = b.half + 450 * band(r, 4500, 15000);
+    const mask = 1 - band(side, width, width + 1400);
+    if (!best || mask > best.mask) best = { def: b, mask: mask, side: side };
+  }
+  return best;
+}
+
 // ---------------- surface ----------------
 function surface(x, y) {
   const r = Math.hypot(x, y);
   const A = assimilation(x, y);
 
-  // province staircase: basin -> shelf -> mountains -> plateau
-  let z = 0;
-  z += 1500 * band(r, 3500, 9000);                       // P1 basin wall
-  z += 1100 * band(r, 9000, 18000);                      // P2 shelf
-  z += 2600 * band(r, 17000, 26000);                     // P3 base
-  z += 4200 * band(r, 25000, 34000);                     // P4 plateau
+  const branch = greyboxBranch(x, y);
+  const core = 1 - band(r, GREYBOX.coreR - 900, GREYBOX.coreR + 900);
+  const danger = band(r, GREYBOX.ruinsR - 1600, GREYBOX.dangerR);
+  const outside = band(r, GREYBOX.dangerR - 1800, GREYBOX.dangerR + 4200);
 
-  // broad relief + drainage-ish incision, aligned to the grain
-  z += 2600 * (fbm(x, y, 21000, 5, 3) - 0.45);
-  z -= 900 * jointStrength(x, y) * band(r, 5000, 30000);  // joints are where it wore down
+  // G0 is a shallow defensible shelf. G1 rises enough to break sightlines. G2 closes
+  // the playable space with karst relief instead of a repeated column fence.
+  let z = 160 + 280 * band(r, 2600, GREYBOX.coreR);
+  z += 720 * band(r, GREYBOX.coreR, GREYBOX.ruinsR);
+  z += 1550 * danger;
+  z += 3300 * outside;
+  z += (180 + 720 * danger) * (fbm(x, y, 9200, 4, 3) - 0.45);
+  z -= 360 * jointStrength(x, y) * band(r, GREYBOX.coreR, GREYBOX.dangerR);
 
-  // karst towers only in P3 and beyond, and never under the settlement
-  const cm = LEGACY ? 0 : cityMask(x, y);
-  const twr = towerField(x, y) * band(r, 16000, 21000)
-       * (1 - 0.55 * band(r, 30000, 38000)) * (1 - Math.min(1, cm * 1.15));
-  // 高度场对每个 (x,y) 只能给出一个 z —— 垂直面和倒悬在数学上就表达不了，所以
-  // 这些塔体一直是锥形，那不是参数没调好。塔体改由 writeTowers() 的等值面网格
-  // 提供（真的能倒悬），高度场这里只留一个 28% 的缓坡基座把它们托起来。
-  // 两者是重叠埋进去的关系，不拼接，也就不会有接缝裂口。
-  z += LEGACY ? twr : twr * 0.28;
+  // The three branches stay broad and readable. Their different floor heights give
+  // each route an identity without putting a mandatory jump on a main path.
+  if (r > GREYBOX.coreR - 600 && branch.mask > 0) {
+    const run = band(r, GREYBOX.coreR, GREYBOX.dangerR);
+    const leaveCore = band(r, GREYBOX.coreR, GREYBOX.coreR + 3500);
+    const floor = 180 + leaveCore * (100 + branch.def.z + 1150 * run);
+    const blend = branch.mask;
+    z = z * (1 - blend) + floor * blend;
+  }
 
-  // P0: the coordinate the Bureau picked -- relatively flat, NOT engineered flat
-  const pad = 1 - band(r, 1800, 4200);
-  z *= (1 - pad);
-  z += pad * 130 * (fbm(x, y, 2600, 2, 33) - 0.5);        // +-65cm over the pad
+  // Keep the centre playable and slightly raised. The outer ring cuts long sightlines.
+  const pad = 1 - band(r, GREYBOX.coreR, GREYBOX.coreR + 1200);
+  z = z * (1 - pad) + (180 + 90 * (fbm(x, y, 2600, 2, 33) - 0.5)) * pad;
 
   // Bedding belongs to the ROCK, not to assimilation. Tying the amount to A left every
   // karst tower a smooth cone, because the tower belt sits far from the rift where A is
   // near zero. Limestone is bedded everywhere; assimilation only makes the beds more
   // regular. Floor it at 0.45 and let A push it up from there.
-  z = strata(z, x, y, (OLD_BED ? A : (0.45 + 0.50 * A)) * (1 - pad));
+  const routeRock = 1 - branch.mask * 0.96;
+  z = strata(z, x, y,
+             (OLD_BED ? A : (0.45 + 0.50 * A)) * (1 - pad)
+             * (1 - core * 0.65) * routeRock);
 
   if (NOPIT) return z;   // used to measure exactly what the pit and the mesa changed
 
@@ -569,7 +624,8 @@ const TUN_CUT_FADE  = 1100;   // 外侧 11m 平滑淡出，避免在边界上立
   for (let x = X0 + 7000; x <= X1 - 7000; x += 500) {
     for (let y = Y0 + 7000; y <= Y1 - 7000; y += 500) {
       if (Math.hypot(x - ENTRY.x, y - ENTRY.y) < 26000) { continue; }  // 必须在另外半边
-      if (Math.hypot(x, y) < 11000) { continue; }                      // 别贴着核心广场
+      const rr = Math.hypot(x, y);
+      if (rr < GREYBOX.ruinsR + 1000 || rr > GREYBOX.dangerR - 1000) { continue; }
       const z = surface(x, y);
       if (z < bz) { bz = z; bx = x; by = y; }
     }
@@ -808,7 +864,7 @@ function writeAccess(path) {
   // 逐环扫下来总有一两处相邻环连不上 —— 几何、净空、坡度全都正常，是 Recast 分块
   // 生成时窄长斜走廊卡在 tile 边界上没连起来。而地道是一条链，断一环后面全失联。
   // 把断面加宽给 Recast 留足余量，比去调全局 navmesh 分辨率代价小得多。
-  const TUN_FLOOR_HW = 260;
+  const TUN_FLOOR_HW = 340;
   const TUN_ARCH = 400;                        // 拱顶净高（AgentHeight 144）
   const TUN_K = 9;                             // 断面上拱的分段数
     // 必须用平台高度，不能用 EXIT_NATURAL_Z：后者是在 NOPIT=true 时算的
@@ -928,7 +984,9 @@ function writeAccess(path) {
     const nx = -ty / tl, ny = tx / tl;                  // 断面法向（水平）
     // 断面整体也左右/上下歪一点，读起来才像手挖的歪洞而不是挤出来的管
     const swayN = 55 * (fbm(c[0], c[1], 2600, 3, 71) - 0.5) * 2;
-    const hwS = TUN_FLOOR_HW * (1 + 0.30 * (hexHash(s, 3, 17) - 0.5));
+    // 地面边缘保持等宽。逐环随机改宽会让相邻四边形形成横向斜坡，
+    // Recast 在分块边界把其中两段切成孤岛；粗糙感只留给拱壁。
+    const hwS = TUN_FLOOR_HW;
     const ring = [];
     for (let k = 0; k <= TUN_K; k++) {
       const phi = Math.PI * k / TUN_K;
@@ -985,6 +1043,28 @@ function writeAccess(path) {
       for (let k = 0; k < TUN_K; k++) { quadIn(A[k], A[k + 1], B[k + 1], B[k]); } // 拱壁(朝内)
     }
     quadIn(A[TUN_K], A[0], B[0], B[TUN_K]);                                       // 地面(朝上)
+  }
+  // 洞口外补一块有厚度的短接坡。地表开口过去只停在最后一环，边缘会露出一个
+  // 小坑；这块坡把管底延伸到完整平台上，也给 Recast 留出稳定的出口落脚面。
+  {
+    const A = rings[rings.length - 1];
+    const P = rings[rings.length - 2];
+    const tx = A.c[0] - P.c[0], ty = A.c[1] - P.c[1];
+    const tl = Math.hypot(tx, ty) || 1, ux = tx / tl, uy = ty / tl;
+    const ex = A.c[0] + ux * 700, ey = A.c[1] + uy * 700;
+    const zt = A.z, zb = zt - 80, hw = TUN_FLOOR_HW;
+    const aL = A.v[TUN_K], aR = A.v[0];
+    const eR = push(ex + A.n[0] * hw, ey + A.n[1] * hw, zt);
+    const eL = push(ex - A.n[0] * hw, ey - A.n[1] * hw, zt);
+    const bL = push(A.c[0] - A.n[0] * hw, A.c[1] - A.n[1] * hw, zb);
+    const bR = push(A.c[0] + A.n[0] * hw, A.c[1] + A.n[1] * hw, zb);
+    const beR = push(ex + A.n[0] * hw, ey + A.n[1] * hw, zb);
+    const beL = push(ex - A.n[0] * hw, ey - A.n[1] * hw, zb);
+    quadIn(aL, aR, eR, eL);
+    quad(bL, beL, beR, bR);
+    quad(aL, eL, beL, bL);
+    quad(aR, bR, beR, eR);
+    quad(eL, eR, beR, beL);
   }
   const tunSteps = SEG;
   // 平走段(还在洞腔里那一段)全部交给迷宫去开槽 —— 那一段没有管壁，走的就是被凿开的
@@ -1217,16 +1297,10 @@ function crustBottom(x, y) {
 // and the transition triangles slice through the maze at player height.
 function surfaceBottom(x, y) {
   const top = surface(x, y) - SKIN;
-  let b = ugField(x, y) > 0 ? Math.min(top, ugCeil(x, y) + UG_SKIN) : top;
-  // Only the last approach to the surface mouth needs the underside lowered around
-  // the tunnel.  Applying this along the full 310m route creates transition curtains
-  // through the maze; omitting it completely lets the surface cap the final 26.5m.
-  const dExit = Math.hypot(x - EXIT.x, y - EXIT.y);
-  if (dExit > EXIT.r && dExit < 3500) {
-    const tz = tunnelFloorNear(x, y);
-    if (tz !== null) { b = Math.min(b, tz - TUN_CLEAR); }
-  }
-  return b;
+  // 地表壳只保留自身厚度。旧版在出口 35m 半径内突然把底面拉到地道以下，
+  // 闭合壳的过渡边因此变成一道横穿地道的竖墙，导航正好断在边界上。
+  // 地道包裹交给 K11_Rock，破土接缝交给 F0Access 出口短接坡。
+  return ugField(x, y) > 0 ? Math.min(top, ugCeil(x, y) + UG_SKIN) : top;
 }
 
 function writeSurface(path) {
@@ -1261,7 +1335,9 @@ function writeSurface(path) {
     for (let i = 0; i < NX; i++) {
       const cx = (latX(X0, i, j, CELL) + latX(X0, i + 1, j + 1, CELL)) * 0.5;
       const cy = (latY(Y0, j, CELL) + latY(Y0, j + 1, CELL)) * 0.5;
-      if (ugField(cx, cy) > 0 && ugOpen(cx, cy)) { cut[j][i] = true; holes++; }
+      // 逃生地道后段已经离开主洞腔，ugField 会回到 0。若仍把开口绑定
+      // ugField，地表薄壳会横压在地道顶上，只剩 1.2~1.7m 净空。
+      if (ugOpen(cx, cy)) { cut[j][i] = true; holes++; }
     }
   }
 
@@ -1303,6 +1379,199 @@ function writeSurface(path) {
 
   fs.writeFileSync(path, L.join('\n'));
   return { verts: topCount * 2, holes: holes, caps: caps, rows: NYH };
+}
+
+// ---------------- surface greybox masses ----------------
+// These are deliberately plain blocks. They establish cover cadence, route width and
+// landmarks. Replacing them with architecture is a later milestone and must preserve
+// the tested footprints.
+function writeGreybox(path) {
+  const V = [], F = [], blocks = [];
+  let next = 1;
+  function box(name, cx, cy, sx, sy, h, rot, zOffset = 0) {
+    const c = Math.cos(rot), s = Math.sin(rot);
+    // A centre-only sample leaves large blocks hanging over valleys. Greybox masses
+    // may embed into a slope, but no part of their footprint may visibly float.
+    let base = Infinity;
+    for (let iy = 0; iy <= 4; iy++) for (let ix = 0; ix <= 4; ix++) {
+      const qx = (ix / 4 - 0.5) * sx;
+      const qy = (iy / 4 - 0.5) * sy;
+      const x = cx + qx * c - qy * s;
+      const y = cy + qx * s + qy * c;
+      base = Math.min(base, surface(x, y));
+    }
+    base += zOffset - 120;
+    const local = [
+      [-sx/2,-sy/2], [ sx/2,-sy/2], [ sx/2, sy/2], [-sx/2, sy/2],
+    ];
+    for (const z of [base, base + h]) for (const q of local) {
+      const x = cx + q[0] * c - q[1] * s;
+      const y = cy + q[0] * s + q[1] * c;
+      V.push('v ' + x.toFixed(1) + ' ' + (-y).toFixed(1) + ' ' + z.toFixed(1));
+    }
+    const a = next; next += 8;
+    F.push('g ' + name);
+    // OBJ mirrors authored Y. Reverse winding so every face still points outward.
+    F.push('f ' + a + ' ' + (a+1) + ' ' + (a+2) + ' ' + (a+3));
+    F.push('f ' + (a+4) + ' ' + (a+7) + ' ' + (a+6) + ' ' + (a+5));
+    F.push('f ' + a + ' ' + (a+4) + ' ' + (a+5) + ' ' + (a+1));
+    F.push('f ' + (a+1) + ' ' + (a+5) + ' ' + (a+6) + ' ' + (a+2));
+    F.push('f ' + (a+2) + ' ' + (a+6) + ' ' + (a+7) + ' ' + (a+3));
+    F.push('f ' + (a+3) + ' ' + (a+7) + ' ' + (a+4) + ' ' + a);
+    blocks.push({ name: name, x: Math.round(cx), y: Math.round(cy),
+                  sx: sx, sy: sy, h: h, rot: +rot.toFixed(4) });
+  }
+
+  // G0: tangent cover ring with broad openings facing each search branch.
+  for (let i = 0; i < 9; i++) {
+    const a = i * Math.PI * 2 / 9;
+    const open = GREYBOX.branches.some(b => Math.abs(angleDelta(a, b.a)) < 0.25);
+    if (open) continue;
+    box('G0_Cover_' + i, Math.cos(a) * 3200, Math.sin(a) * 3200,
+        720, 190, (i & 1) ? 210 : 125, a + Math.PI / 2);
+  }
+
+  // G1 is a broken occupation belt, not a surviving city. One low pair per branch
+  // establishes a corner and a fallback pocket without turning the horizon into towers.
+  for (let bi = 0; bi < GREYBOX.branches.length; bi++) {
+    const b = GREYBOX.branches[bi];
+    const d = 7600 + bi * 450;
+    for (const side of [-1, 1]) {
+      const lateral = side * (b.half + 1450 + (bi & 1) * 350);
+      const ca = b.a + 0.06 * Math.sin(d / 4200 + b.a * 1.7);
+      const cx = Math.cos(ca) * d - Math.sin(ca) * lateral;
+      const cy = Math.sin(ca) * d + Math.cos(ca) * lateral;
+      const sx = 1900 + 250 * bi;
+      const sy = 900 + 180 * ((bi + (side > 0 ? 1 : 0)) & 1);
+      const h = 520 + 210 * ((bi + (side > 0 ? 1 : 0)) % 3);
+      box('G1_' + b.name + '_' + (side > 0 ? 'R' : 'L'),
+          cx, cy, sx, sy, h, ca + (side > 0 ? 0.13 : -0.16));
+    }
+  }
+
+  // Faction ruins use the visual grammar already fixed by the K-11 documents.
+  // Resistance work is repaired, uneven and defensive.
+  const sink = GREYBOX.branches[0], ruins = GREYBOX.branches[1], ridge = GREYBOX.branches[2];
+  box('SITE_Resistance_Gate_L', Math.cos(sink.a)*11700-Math.sin(sink.a)*3400,
+      Math.sin(sink.a)*11700+Math.cos(sink.a)*3400, 1900, 1350, 2900, sink.a - 0.18);
+  box('SITE_Resistance_Gate_R', Math.cos(sink.a)*12300+Math.sin(sink.a)*2700,
+      Math.sin(sink.a)*12300-Math.cos(sink.a)*2700, 1350, 1050, 1850, sink.a + 0.31);
+
+  // Acceptance work is axial, intact and symmetric around a central hall.
+  const tx = GREYBOX.sites.acceptance.x, ty = GREYBOX.sites.acceptance.y;
+  box('SITE_Acceptance_Hall', tx, ty, 2300, 2100, 3100, ruins.a + 0.12);
+  box('SITE_Acceptance_Crown', tx, ty, 1350, 1250, 1600, ruins.a + 0.12, 3000);
+  const ax = Math.cos(ruins.a + Math.PI / 2) * 2500;
+  const ay = Math.sin(ruins.a + Math.PI / 2) * 2500;
+  box('SITE_Acceptance_Wing_L', tx + ax, ty + ay, 1700, 1200, 1800, ruins.a);
+  box('SITE_Acceptance_Wing_R', tx - ax, ty - ay, 1700, 1200, 1800, ruins.a);
+
+  // G2's skyline comes from the eroded limestone and sinkholes in the surface mesh.
+  // No architecture block is allowed to stand in for the pre-civilisation landform.
+
+  // Previous outsiders left three small modern footprints at the coordinates already
+  // fixed by the ending chain. They borrow local ruins and never become a fourth zone.
+  for (let i = 0; i < GREYBOX.sites.outsiders.length; i++) {
+    const o = GREYBOX.sites.outsiders[i];
+    const a = 0.37 + i * 0.71;
+    box('SITE_Outsider_' + o.name + '_Pad', o.x, o.y, 900, 700, 90, a);
+    box('SITE_Outsider_' + o.name + '_Case', o.x + 520*Math.cos(a), o.y + 520*Math.sin(a),
+        420, 260, 310 + i * 90, a);
+    if (i === 1) {
+      box('SITE_Outsider_' + o.name + '_Mast', o.x - 360, o.y + 260, 130, 130, 620, a);
+    }
+  }
+
+  fs.writeFileSync(path, ['s off'].concat(V, F).join('\n'));
+  fs.writeFileSync(OUT + '/k11_greybox_layout.json', JSON.stringify({
+    version: 1,
+    zones: { core: GREYBOX.coreR, ruins: GREYBOX.ruinsR, danger: GREYBOX.dangerR },
+    branches: GREYBOX.branches,
+    subregions: GREYBOX.subregions,
+    sites: GREYBOX.sites,
+    naturalTraces: ['jointed limestone', 'dry valleys', 'karst spring', 'sinkholes'],
+    blocks: blocks,
+  }, null, 2));
+  const previewDir = OUT + '/_preview';
+  fs.mkdirSync(previewDir, { recursive: true });
+  const px = x => 500 + x / 52;
+  const py = y => 500 - y / 52;
+  const polygon = b => {
+    const c = Math.cos(b.rot), s = Math.sin(b.rot), pts = [];
+    for (const q of [[-b.sx/2,-b.sy/2],[b.sx/2,-b.sy/2],[b.sx/2,b.sy/2],[-b.sx/2,b.sy/2]]) {
+      const x = b.x + q[0]*c - q[1]*s, y = b.y + q[0]*s + q[1]*c;
+      pts.push(px(x).toFixed(1) + ',' + py(y).toFixed(1));
+    }
+    const fill = b.name.includes('Acceptance') ? '#8bb7a8'
+               : b.name.includes('Resistance') ? '#b07d72'
+               : b.name.includes('Outsider') ? '#d1b45b' : '#65717a';
+    return '<polygon points="' + pts.join(' ') + '" fill="' + fill
+      + '" stroke="#172026" stroke-width="1"/>';
+  };
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000">',
+    '<rect width="1000" height="1000" fill="#11171b"/>',
+    '<circle cx="500" cy="500" r="' + (GREYBOX.dangerR/52).toFixed(1) + '" fill="#28333a" stroke="#87939a" stroke-width="2"/>',
+    '<circle cx="500" cy="500" r="' + (GREYBOX.ruinsR/52).toFixed(1) + '" fill="#3a454a" stroke="#a6afb3" stroke-width="2"/>',
+    '<circle cx="500" cy="500" r="' + (GREYBOX.coreR/52).toFixed(1) + '" fill="#59646a" stroke="#d4d9dc" stroke-width="2"/>',
+  ];
+  for (const b of GREYBOX.branches) {
+    svg.push('<line x1="500" y1="500" x2="' + px(Math.cos(b.a)*GREYBOX.dangerR).toFixed(1)
+      + '" y2="' + py(Math.sin(b.a)*GREYBOX.dangerR).toFixed(1)
+      + '" stroke="#dce3e6" stroke-width="' + (b.half/26).toFixed(1)
+      + '" opacity="0.14"/>');
+  }
+  for (const b of blocks) svg.push(polygon(b));
+  svg.push('<circle cx="' + px(ENTRY.x).toFixed(1) + '" cy="' + py(ENTRY.y).toFixed(1)
+    + '" r="10" fill="none" stroke="#e06a5f" stroke-width="4"/>');
+  svg.push('<circle cx="' + px(EXIT.x).toFixed(1) + '" cy="' + py(EXIT.y).toFixed(1)
+    + '" r="8" fill="none" stroke="#69a9d1" stroke-width="4"/>');
+  svg.push('<g fill="#eef2f3" font-family="sans-serif" font-size="18">',
+    '<text x="515" y="490">G0 CORE</text>',
+    '<text x="515" y="365">G1 RUINS</text>',
+    '<text x="515" y="185">G2 KARST</text>',
+    '<text x="38" y="42">K-11 SURFACE GREYBOX V1</text>',
+    '<text x="38" y="70" fill="#8bb7a8">ACCEPTANCE</text>',
+    '<text x="190" y="70" fill="#b07d72">RESISTANCE</text>',
+    '<text x="340" y="70" fill="#d1b45b">PREVIOUS OUTSIDERS</text>',
+    '</g></svg>');
+  fs.writeFileSync(previewDir + '/k11_greybox_plan.svg', svg.join('\n'));
+  return { blocks: blocks.length, verts: V.length, faces: blocks.length * 6 };
+}
+
+function auditGreyboxSurface() {
+  let coreLo = 1e9, coreHi = -1e9;
+  for (let y = -GREYBOX.coreR; y <= GREYBOX.coreR; y += 400) {
+    for (let x = -GREYBOX.coreR; x <= GREYBOX.coreR; x += 400) {
+      if (Math.hypot(x, y) > GREYBOX.coreR) continue;
+      const z = surface(x, y);
+      coreLo = Math.min(coreLo, z); coreHi = Math.max(coreHi, z);
+    }
+  }
+
+  const routes = [];
+  for (const b of GREYBOX.branches) {
+    const end = b.name === 'SINK' ? 14800 : GREYBOX.dangerR - 1200;
+    let prev = null, maxGrade = 0, maxStep = 0, maxAt = null, length = 0;
+    for (let r = GREYBOX.coreR; r <= end; r += 200) {
+      const a = b.a + 0.10 * Math.sin(r / 4200 + b.a * 1.7);
+      const x = Math.cos(a) * r, y = Math.sin(a) * r, z = surface(x, y);
+      if (prev) {
+        const run = Math.hypot(x - prev.x, y - prev.y);
+        const dz = Math.abs(z - prev.z);
+        const grade = Math.atan2(dz, run) * 180 / Math.PI;
+        if (grade > maxGrade) {
+          maxGrade = grade; maxStep = dz;
+          maxAt = { r: r, x: x, y: y, z0: prev.z, z1: z };
+        }
+        length += Math.hypot(run, z - prev.z);
+      }
+      prev = { x: x, y: y, z: z };
+    }
+    routes.push({ name: b.name, maxGrade: maxGrade, maxStep: maxStep,
+                  maxAt: maxAt, length: length });
+  }
+  return { coreRange: coreHi - coreLo, coreLo: coreLo, coreHi: coreHi, routes: routes };
 }
 
 // ---------------- 底岩同化层：六边形硅化柱阵 ----------------
@@ -2370,6 +2639,7 @@ function writeUnderground(path) {
     }
     return true;
   };
+  const floorCell = (i, j) => cellIn(i, j) && !hexCell(i, j);
 
   let open = 0, tot = 0, floored = 0;
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
@@ -2378,11 +2648,23 @@ function writeUnderground(path) {
     tot++;
     const op = cellOpen(i, j);
     if (op) open++;
-    if (!hexCell(i, j)) {
+    if (floorCell(i, j)) {
       floored++;
       quad(fv(i, j), fv(i + 1, j), fv(i + 1, j + 1), fv(i, j + 1));
       // 洞底的背面：不加的话从更低处或穿模时会直接看穿
       quad(fb(i, j), fb(i, j + 1), fb(i + 1, j + 1), fb(i + 1, j));
+      // 顶面和背面还不是实体。把所有裸露边封起来，避免柱阵边缘、洞口边缘和
+      // 洞腔边界露出空心夹层。与相邻地板共享的边不重复出面。
+      for (const [di, dj, e] of [
+        [ 1, 0, [[i+1,j],   [i+1,j+1]]],
+        [-1, 0, [[i,j+1],   [i,j]]],
+        [ 0, 1, [[i+1,j+1], [i,j+1]]],
+        [ 0,-1, [[i,j],     [i+1,j]]],
+      ]) {
+        if (floorCell(i + di, j + dj)) continue;
+        const [[a0,b0],[a1,b1]] = e;
+        quad(fv(a0,b0), fv(a1,b1), fb(a1,b1), fb(a0,b0));
+      }
     }
     if (!op) {
       quad(cv(i, j), cv(i, j + 1), cv(i + 1, j + 1), cv(i + 1, j));
@@ -2884,6 +3166,8 @@ const dlt = writeDelta(OUT + '/k11_delta.json');
 const acc = writeAccess(OUT + '/k11_f0access.obj');
 const sres = writeSurface(OUT + '/k11_surface.obj');
 const nv = sres.verts;
+const grey = writeGreybox(OUT + '/k11_greybox.obj');
+const greyAudit = auditGreyboxSurface();
 const ug = writeUnderground(OUT + '/k11_underground.obj');
 const hex = writeHexField(OUT + '/k11_hexfield.obj', OUT + '/k11_hexdeco.obj',
                           OUT + '/k11_navfloor.obj');
@@ -2892,11 +3176,12 @@ const twr = writeTowers(OUT + '/k11_towers.obj');
 const rock = buildRockSolid(OUT + '/k11_rock.obj');
 
 let lo = 1e9, hi = -1e9;
-const prov = { P0: [1e9, -1e9], P1: [1e9, -1e9], P2: [1e9, -1e9], P3: [1e9, -1e9], P4: [1e9, -1e9] };
+const prov = { G0: [1e9, -1e9], G1: [1e9, -1e9], G2: [1e9, -1e9], OUT: [1e9, -1e9] };
 for (let j = 0; j <= NY; j += 2) for (let i = 0; i <= NX; i += 2) {
   const x = X0 + i * CELL, y = Y0 + j * CELL, z = surface(x, y), r = Math.hypot(x, y);
   lo = Math.min(lo, z); hi = Math.max(hi, z);
-  const k = r < 3500 ? 'P0' : r < 9000 ? 'P1' : r < 18000 ? 'P2' : r < 26000 ? 'P3' : 'P4';
+  const k = r < GREYBOX.coreR ? 'G0' : r < GREYBOX.ruinsR ? 'G1'
+          : r < GREYBOX.dangerR ? 'G2' : 'OUT';
   prov[k][0] = Math.min(prov[k][0], z); prov[k][1] = Math.max(prov[k][1], z);
 }
 const R = v => (v / 100).toFixed(1);
@@ -2904,8 +3189,22 @@ console.log('surface grid ' + NX + 'x' + NY + ' @' + CELL + 'cm -> ' + nv + ' ve
   + sres.holes + ' cells cut open over the collapses ('
   + Math.round(sres.holes * CELL * CELL / 10000) + ' m2)');
 console.log('surface relief ' + R(lo) + 'm .. ' + R(hi) + 'm   (total ' + R(hi - lo) + 'm)');
-for (const k of ['P0','P1','P2','P3','P4'])
+for (const k of ['G0','G1','G2','OUT'])
   console.log('  ' + k + '  ' + R(prov[k][0]) + ' .. ' + R(prov[k][1]) + ' m');
+console.log('greybox masses ' + grey.blocks + ' blocks, ' + grey.verts + ' verts, '
+  + grey.faces + ' quads');
+console.log('  G0 floor range ' + R(greyAudit.coreLo) + '..' + R(greyAudit.coreHi)
+  + 'm (spread ' + R(greyAudit.coreRange) + 'm) -> '
+  + (greyAudit.coreRange <= 400 ? 'PASS' : 'FAIL'));
+for (const q of greyAudit.routes) {
+  console.log('  ' + q.name.padEnd(6) + ' route ' + R(q.length) + 'm, max sampled grade '
+    + q.maxGrade.toFixed(1) + 'deg, max 2m-sample rise ' + Math.round(q.maxStep) + 'cm -> '
+    + (q.maxGrade <= 30 ? 'PASS' : 'FAIL'));
+  if (q.maxGrade > 30 && q.maxAt) {
+    console.log('           at r=' + R(q.maxAt.r) + 'm (' + Math.round(q.maxAt.x) + ','
+      + Math.round(q.maxAt.y) + ') z ' + R(q.maxAt.z0) + '->' + R(q.maxAt.z1) + 'm');
+  }
+}
 console.log('layer two: ' + ug.tot + ' cells, ' + Math.round(100 * ug.open / ug.tot) + '% open to sky, ' + ug.verts + ' verts');
 console.log('  tiankeng: surface ' + R(surface(TK.x, TK.y)) + 'm -> floor ' + R(ugFloor(TK.x, TK.y))
   + 'm = ' + R(surface(TK.x, TK.y) - ugFloor(TK.x, TK.y)) + 'm drop, ~' + R(TK.r * 2) + 'm across');

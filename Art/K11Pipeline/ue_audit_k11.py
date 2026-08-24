@@ -8,7 +8,7 @@ algorithm; this proves the level.
 
 Run from the loaded project with Unreal Editor's Execute Python Script command.
 """
-import unreal, os, math, time
+import unreal, os, math, time, json
 from collections import Counter, defaultdict
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
@@ -18,7 +18,7 @@ GROUND = {'K11_Surface', 'K11_Underground', 'K11_F0Access'}
 # obj -> uasset pairs that must be re-imported together
 # k11_water is no longer emitted: excluding the maze footprint and the entry apron from
 # the water mask left no cell below the water line.
-PAIRS = ['k11_surface', 'k11_underground', 'k11_f0access',
+PAIRS = ['k11_surface', 'k11_greybox', 'k11_underground', 'k11_f0access',
          'k11_hexfield', 'k11_hexcut', 'k11_navfloor']
 MAZE_C = (-8880, -6144)          # altar
 MAZE_R = 8800                    # maze outer radius, cm
@@ -76,12 +76,14 @@ def trace_z(x, y, ztop, zbot, ignore=None):
 
 
 # ---------------------------------------------------------------- A1
-def _obj_face_count(path):
+def _obj_triangle_count(path):
     n = 0
     with open(path, 'r', encoding='utf-8', errors='ignore') as f:
         for line in f:
             if line[:2] == 'f ':
-                n += 1
+                # UE triangulates OBJ polygons on import. A quad is two triangles,
+                # so comparing polygon lines directly reports every box mesh stale.
+                n += max(0, len(line.split()) - 3)
     return n
 
 
@@ -107,108 +109,85 @@ def a1_not_stale():
         if not m:
             diverged.append((n, 'asset not loadable'))
             continue
-        ue_t, obj_t = m.get_num_triangles(0), _obj_face_count(o)
+        ue_t, obj_t = m.get_num_triangles(0), _obj_triangle_count(o)
         if ue_t != obj_t:
-            diverged.append((n, '%d tris in UE vs %d faces in obj' % (ue_t, obj_t)))
+            diverged.append((n, '%d tris in UE vs %d triangulated obj faces' % (ue_t, obj_t)))
     report('A1', 'geometry matches obj', not diverged,
            ('all %d match' % len(PAIRS) if not diverged else str(diverged))
            + ('   [mtime behind: %s]' % ', '.join(warn) if warn else ''))
 
 
-# ---------------------------------------------------------------- A2
-def a2_single_generation():
-    """Exactly one city-column footprint size.
-
-    Scoped to the column field itself. BoB_Seal (maze furniture) and BoB_Beacon_Post
-    also use k11_hexprism but are different objects with different rules -- lumping
-    them in here just produced noise.
-    """
-    allpr = mesh_actors('k11_hexprism')
-    pr = [(a, c) for a, c in allpr
-          if a.get_actor_label().startswith('K11_Col_') or a.get_actor_label().startswith(
-              ('BoB_City_', 'BoB_Fill_W'))]
-    other = [(a, c) for a, c in allpr if (a, c) not in pr]
-    sc = Counter(round(a.get_actor_scale3d().x, 1) for a, _ in pr)
-    report('A2', 'city columns one gen', len(sc) <= 1,
-           '%d footprint size(s): %s  (+%d seal/beacon prisms outside scope)'
-           % (len(sc), dict(sorted(sc.items())), len(other)))
-    return pr
+# ---------------------------------------------------------------- A2-A5: current surface greybox
+def _greybox_layout():
+    p = os.path.join(TOOLS, 'k11_greybox_layout.json')
+    return json.load(open(p, encoding='utf-8')) if os.path.exists(p) else None
 
 
-# ---------------------------------------------------------------- A3
-def a3_no_interpenetration(pr):
-    """No two columns' inscribed footprints overlap."""
-    CELL = 500
-    grid = defaultdict(list)
-    recs = []
-    for a, _ in pr:
-        l, s = a.get_actor_location(), a.get_actor_scale3d()
-        recs.append((a.get_actor_label(), l.x, l.y, s.x * 0.866))
-    for i, r in enumerate(recs):
-        grid[(int(r[1] // CELL), int(r[2] // CELL))].append(i)
-    clash = set()
-    for i, (n, x, y, ri) in enumerate(recs):
-        gx, gy = int(x // CELL), int(y // CELL)
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                for j in grid[(gx + dx, gy + dy)]:
-                    if j <= i:
-                        continue
-                    _, xj, yj, rj = recs[j]
-                    if math.hypot(x - xj, y - yj) < ri + rj:
-                        clash.add((i, j))
-    report('A3', 'columns no overlap', not clash, '%d overlapping pairs' % len(clash))
+def a2_surface_replaced():
+    """The current greybox is present and the superseded city-column field is gone."""
+    old_prefixes = ('K11_Col_', 'BoB_City_', 'BoB_Fill_W',
+                    'BoB_Ruin_', 'BoB_Deco_', 'BoB_Elem_', 'BoB_Fill_',
+                    'BoB_CliffRock', 'SM_house')
+    legacy = [a.get_actor_label() for a in actors()
+              if a.get_actor_label().startswith(old_prefixes)]
+    grey = mesh_actors('k11_greybox')
+    ok = len(grey) == 1 and not legacy
+    report('A2', 'surface greybox replaced', ok,
+           '%d K11_Greybox actor(s) | %d legacy city actor(s)'
+           % (len(grey), len(legacy)))
 
 
-# ---------------------------------------------------------------- A4
-def a4_upright(pr):
-    """Hard constraint from round 9: no tilt on X or Y."""
-    bad = [a.get_actor_label() for a, _ in pr
-           if abs(a.get_actor_rotation().roll) > 0.5 or abs(a.get_actor_rotation().pitch) > 0.5]
-    report('A4', 'columns upright', not bad,
-           '%d tilted (roll/pitch != 0)' % len(bad) + ('  e.g. %s' % bad[:3] if bad else ''))
+def a3_three_regions():
+    """The generated plan retains the approved G0/G1/G2 radii and three routes."""
+    d = _greybox_layout()
+    if not d:
+        report('A3', 'three surface regions', False, 'layout json missing')
+        return
+    zones = d.get('zones', {})
+    branches = {b.get('name') for b in d.get('branches', [])}
+    subregions = set(d.get('subregions', {}))
+    ok = (zones == {'core': 5000, 'ruins': 13000, 'danger': 22000}
+          and branches == {'SINK', 'RUINS', 'RIDGE'}
+          and subregions == {'beaconBasin', 'dryGorge', 'springRuins',
+                             'jointRidge', 'hiddenEgress'})
+    report('A3', 'three surface regions', ok,
+           'zones %s | branches %s | subregions %s'
+           % (zones, sorted(branches), sorted(subregions)))
 
 
-# ---------------------------------------------------------------- A5
-def a5_grounded(pr, tol=50):
-    """No column may float higher than the corbel lift it declares.
+def a4_history_layers():
+    """Natural terrain, both faction ruins and all three outsider traces stay explicit."""
+    d = _greybox_layout()
+    if not d:
+        report('A4', 'history layers present', False, 'layout json missing')
+        return
+    names = [b.get('name', '') for b in d.get('blocks', [])]
+    outsiders = d.get('sites', {}).get('outsiders', [])
+    outsider_xyz = {(o.get('name'), o.get('x'), o.get('y')) for o in outsiders}
+    expected = {('A_PACK', 11200, 5200), ('B_MAP', -16400, 11800),
+                ('C_TIMER', -13500, -11500)}
+    natural = set(d.get('naturalTraces', []))
+    ok = (any(n.startswith('SITE_Acceptance_') for n in names)
+          and any(n.startswith('SITE_Resistance_') for n in names)
+          and outsider_xyz == expected
+          and {'jointed limestone', 'dry valleys', 'karst spring', 'sinkholes'} <= natural)
+    report('A4', 'history layers present', ok,
+           'natural %d | acceptance %d | resistance %d | outsiders %d/3'
+           % (len(natural), sum(n.startswith('SITE_Acceptance_') for n in names),
+              sum(n.startswith('SITE_Resistance_') for n in names), len(outsider_xyz & expected)))
 
-    Embedding is fine (slopes need it), so this is a one-sided check: base must not
-    sit above ground + declared lift. A column with no K11_LIFT_* tag declares 0,
-    i.e. it must be on the ground.
-    """
-    ign = _ignore_all_but(GROUND)
-    onground = corbel = buried = floating = noterrain = 0
-    worst = []
-    for a, _ in pr:
-        l, s = a.get_actor_location(), a.get_actor_scale3d()
-        base = l.z - s.z
-        lift = 0.0
-        for t in a.tags:
-            st = str(t)
-            if st.startswith('K11_LIFT_'):
-                lift = float(st.rsplit('_', 1)[-1])
-        r = trace_z(l.x, l.y, 12000, -5000, ign)
-        if r is None:
-            noterrain += 1
-            worst.append((a.get_actor_label(), 'no terrain'))
-            continue
-        over = base - (r[0] + lift)
-        if over > tol:
-            floating += 1
-            worst.append((a.get_actor_label(), round(over)))
-        elif lift > 0:
-            corbel += 1
-        elif over < -tol:
-            buried += 1
-        else:
-            onground += 1
-    worst.sort(key=lambda t: (t[1] if isinstance(t[1], int) else 10 ** 9), reverse=True)
-    ok = (floating == 0 and noterrain == 0)
-    report('A5', 'no unexplained float', ok,
-           'on ground %d | embedded %d | declared corbel %d | FLOATING %d | no terrain %d%s'
-           % (onground, buried, corbel, floating, noterrain,
-              ('  worst %s' % worst[:3] if worst else '')))
+
+def a5_greybox_transform():
+    """The combined greybox is imported at the generator's world-space transform."""
+    grey = mesh_actors('k11_greybox')
+    bad = []
+    for a, _ in grey:
+        l, r, s = a.get_actor_location(), a.get_actor_rotation(), a.get_actor_scale3d()
+        if max(abs(l.x), abs(l.y), abs(l.z), abs(r.roll), abs(r.pitch), abs(r.yaw),
+               abs(s.x - 1), abs(s.y - 1), abs(s.z - 1)) > 0.01:
+            bad.append((a.get_actor_label(), l, r, s))
+    report('A5', 'greybox world transform', len(grey) == 1 and not bad,
+           'identity' if len(grey) == 1 and not bad else '%d actor(s), bad %s' % (len(grey), bad[:1]))
 
 
 # ---------------------------------------------------------------- A6
@@ -391,7 +370,7 @@ def a10_no_flooding():
 
 # ---------------------------------------------------------------- extras
 def x_material_scope():
-    """M_K11_MazeSplit only on HexField; M_K11_Ground nowhere."""
+    """MazeSplit stays scoped and visible terrain stays in M1 greybox material."""
     split_on, ground_on = [], []
     for a in actors():
         for cp in a.get_components_by_class(unreal.StaticMeshComponent):
@@ -407,6 +386,21 @@ def x_material_scope():
            'ok (K11_HexField only)' if not bad_split else 'also on %s' % bad_split[:5])
     report('M2', 'M_K11_Ground purged', not ground_on,
            'ok' if not ground_on else '%d actors still use it' % len(ground_on))
+    grey_labels = {'K11_Surface', 'K11_Underground', 'K11_F0Access'}
+    grey = {}
+    for a in actors():
+        if a.get_actor_label() not in grey_labels:
+            continue
+        names = set()
+        for cp in a.get_components_by_class(unreal.StaticMeshComponent):
+            names.update(m.get_name() for m in cp.get_materials() if m)
+        grey[a.get_actor_label()] = sorted(names)
+    bad_grey = {k: v for k, v in grey.items()
+                if 'WorldGridMaterial' not in v}
+    missing_grey = sorted(grey_labels - set(grey))
+    report('M3', 'terrain uses greybox material', not bad_grey and not missing_grey,
+           'ok' if not bad_grey and not missing_grey
+           else 'wrong %s | missing %s' % (bad_grey, missing_grey))
 
 
 # Crater helix, mirrored from gen_k11.js writeAccess(). The stair is 280 hexagonal
@@ -542,10 +536,10 @@ def run():
     print('K-11 LEVEL AUDIT   %s' % time.strftime('%Y-%m-%d %H:%M:%S'))
     print('=' * 78)
     a1_not_stale()
-    pr = a2_single_generation()
-    a3_no_interpenetration(pr)
-    a4_upright(pr)
-    a5_grounded(pr)
+    a2_surface_replaced()
+    a3_three_regions()
+    a4_history_layers()
+    a5_greybox_transform()
     a6_maze_connected()
     a7a8_wall_and_step()
     a9_two_openings()
