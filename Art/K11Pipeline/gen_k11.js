@@ -269,6 +269,35 @@ function surface(x, y) {
     z = z * (1 - blend) + floor * blend;
   }
 
+  // The dry gorge carries the resistance route. The route sits in the old channel;
+  // raised shoulders explain the repaired walls and break the view back to the core.
+  if (branch.def.name === 'SINK' && r > 5200 && r < 18000) {
+    const fade = band(r, 5200, 7600) * (1 - band(r, 15600, 18000));
+    const channel = 1 - band(branch.side, 450, 2100);
+    const shoulder = band(branch.side, 1700, 2500) * (1 - band(branch.side, 2500, 3900));
+    z -= 150 * channel * fade;
+    z += 240 * shoulder * fade;
+  }
+
+  // The old settlement grew around a shallow karst spring beside the RUINS route.
+  // The acceptance hall later cut its clean axis across that older terrain-led fabric.
+  const springAxis = GREYBOX.branches[1].a + 0.12;
+  const springX = GREYBOX.sites.acceptance.x + Math.cos(springAxis) * -3600
+                - Math.sin(springAxis) * 3500;
+  const springY = GREYBOX.sites.acceptance.y + Math.sin(springAxis) * -3600
+                + Math.cos(springAxis) * 3500;
+  const sdx = (x - springX) / 3100, sdy = (y - springY) / 2300;
+  const springBasin = 1 - band(Math.hypot(sdx, sdy), 0.16, 1.0);
+  z -= 210 * springBasin;
+
+  // RIDGE remains a landform route. One asymmetric shoulder turns the climb into a
+  // sequence of framed views without adding another building district.
+  if (branch.def.name === 'RIDGE' && r > 7600 && r < 17600) {
+    const fade = band(r, 7600, 9800) * (1 - band(r, 15000, 17600));
+    const shoulder = band(branch.side, 1900, 3000) * (1 - band(branch.side, 3000, 5200));
+    z += shoulder * fade * (180 + 180 * jointStrength(x, y));
+  }
+
   // Keep the centre playable and slightly raised. The outer ring cuts long sightlines.
   const pad = 1 - band(r, GREYBOX.coreR, GREYBOX.coreR + 1200);
   z = z * (1 - pad) + (180 + 90 * (fbm(x, y, 2600, 2, 33) - 0.5)) * pad;
@@ -335,12 +364,8 @@ function surface(x, y) {
       const sm = t * t * (3 - 2 * t);          // smoothstep，收边和自然地面相切
       z = EXIT.padZ + (z - EXIT.padZ) * sm;
     }
-    // 平台上再顺着地道挖一条放坡的堑口：中心压到地道底之下 60cm（让玩家踩在
-    // 地道自己的地面上），两侧 15m 内按 ~16 度爬回平台。这样出洞是走上一段缓坡，
-    // 而不是从洞口掉进一个孔里。
-    // 放坡已停用：它把地表拉到离地道地面只差 1m 的位置，两个可走面叠在一起，
-    // Recast 把导航建在上面那层(ring 281 导航 1111 / 地道 999)，底下的地道被孤立，
-    // 寻路断在那儿。出口的洞已由 K11_ExitApron 实体填掉，放坡没有存在必要了。
+    // 地道终点直接接这块实地。旧关卡里的 K11_ExitApron 临时补片由重导脚本清理，
+    // 出口高度和碰撞都由 K11_Surface 与地道本体共同负责。
     const cut = null;
     if (cut !== null) {
       const t2 = Math.max(0, Math.min(1, cut.d / TUN_CUT_R));
@@ -601,6 +626,8 @@ const UG = { cx: -9000, cy: -7000, rx: 8600, ry: 7000, floor: -3600 };
 // rTop 从 3400 收到 2200：34m 半径的坑配 1.65m 的踏板，比值 1:20.6，台阶细得像根线。
 // 参考图③ 的巨坑是紧凑的漏斗，螺旋阶梯占明显宽度。收窄后比值降到 1:7 左右。
 const ENTRY = { x: -9966, y: -14315, rTop: 2200, rBot: 1050, lip: 2590, floor: -3700 };
+const ENTRY_STAIR_TURNS = 4.2;
+const ENTRY_STAIR_STEPS = 280;
 const EXIT = { x: -4200, y: -10200, r: 900, mesa: 4200 };
 const EXIT_PAD_R = 1800;      // 出口平台半径 18m：够站人、够转身、够放引导物
 const EXIT_PAD_BLEND = 1600;  // 平台外圈用 16m 平滑收回自然地形，不留台坎
@@ -809,7 +836,8 @@ function writeAccess(path) {
   // 参考图②③：山顶巨坑内部的螺旋阶梯由六边形板相邻拼接而成，沿山体内壁蜿蜒，
   // 不可穿越、不悬空。所以不再用连续的斜坡带(那读起来是一条工业栈道)，改成一块块
   // 独立的六边形踏板：每块板绕坑心转一小步、降一级，外沿嵌进岩壁，相邻板边缘相接。
-  const TURNS = 4.2, STEPS = 280, THICK = 46;   // 坑收窄后周长变短，加圈数把坡度压回 8度左右
+  const TURNS = ENTRY_STAIR_TURNS, STEPS = ENTRY_STAIR_STEPS, THICK = 46;
+  // 坑收窄后周长变短，加圈数把坡度压回 8 度左右。
   // 踏板半径必须随坑半径收缩：坑是上宽下窄的漏斗，固定 190 的板在下段会啃进
   // 对面的坑壁(穿模)，在上段又显得太小(比例失衡)。改成按当前坑半径的比例取。
   const PLATE_R_MAX = 320, PLATE_R_MIN = 220;   // 踏板对边宽 3.8..5.5m，是能站人打枪的平台
@@ -869,7 +897,7 @@ function writeAccess(path) {
     // 必须用平台高度，不能用 EXIT_NATURAL_Z：后者是在 NOPIT=true 时算的
   // "自然地面"(1465)，而出口周围已经被压成平台(1345)。用自然地面会让洞口
   // 比平台高 150cm，出洞就是一个迈不过去的下坎（MaxStepHeight 只有 45）。
-  const sTop = (EXIT.padZ !== undefined ? EXIT.padZ : EXIT_NATURAL_Z) + 20;
+  const sTop = (EXIT.padZ !== undefined ? EXIT.padZ : EXIT_NATURAL_Z);
   // 起点必须和迷宫地面【严格】同高，不能用 ENTRY.floor 这个近似。
   // 迷宫地面是 MAZE_FLOOR = AZ.LZ = HEXQ(ugFloor(ENTRY.x, ENTRY.y))，而 writeAccess
   // 在 writeHexField 之前跑、拿不到 AZ，所以这里用同一个公式重算一遍。
@@ -1043,6 +1071,24 @@ function writeAccess(path) {
     }
     quadIn(A[TUN_K], A[0], B[0], B[TUN_K]);                                       // 地面(朝上)
   }
+  // 露天口的地面原先只有一张顶面。碰撞和导航能通过，斜视时仍会看到顶面下方的黑缝。
+  // 给整段露天地面加连续路基，底部压进 K11_Surface。两侧封边后视线上没有空层。
+  const mouthBase = rings.map((r, i) => {
+    if (!mouth[i]) return null;
+    const z = r.z - 360;
+    return [
+      push(r.c[0] - r.n[0] * TUN_FLOOR_HW, r.c[1] - r.n[1] * TUN_FLOOR_HW, z),
+      push(r.c[0] + r.n[0] * TUN_FLOOR_HW, r.c[1] + r.n[1] * TUN_FLOOR_HW, z),
+    ];
+  });
+  for (let s = 0; s < SEG; s++) {
+    if (!(mouth[s] && mouth[s + 1])) continue;
+    const A = rings[s].v, B = rings[s + 1].v;
+    const BA = mouthBase[s], BB = mouthBase[s + 1];
+    quad(BA[0], BB[0], BB[1], BA[1]);
+    quad(A[TUN_K], BA[0], BB[0], B[TUN_K]);
+    quad(A[0], B[0], BB[1], BA[1]);
+  }
   // 洞口外补一块有厚度的短接坡。地表开口过去只停在最后一环，边缘会露出一个
   // 小坑；这块坡把管底延伸到完整平台上，也给 Recast 留出稳定的出口落脚面。
   {
@@ -1051,7 +1097,7 @@ function writeAccess(path) {
     const tx = A.c[0] - P.c[0], ty = A.c[1] - P.c[1];
     const tl = Math.hypot(tx, ty) || 1, ux = tx / tl, uy = ty / tl;
     const ex = A.c[0] + ux * 700, ey = A.c[1] + uy * 700;
-    const zt = A.z, zb = zt - 80, hw = TUN_FLOOR_HW;
+    const zt = A.z, zb = zt - 360, hw = TUN_FLOOR_HW;
     const aL = A.v[TUN_K], aR = A.v[0];
     const eR = push(ex + A.n[0] * hw, ey + A.n[1] * hw, zt);
     const eL = push(ex - A.n[0] * hw, ey - A.n[1] * hw, zt);
@@ -1298,7 +1344,11 @@ function crustBottom(x, y) {
 function writeGreybox(path) {
   const V = [], F = [], blocks = [];
   let next = 1;
+  const clearsOpening = (cx, cy, radius) =>
+    Math.hypot(cx - ENTRY.x, cy - ENTRY.y) - radius >= ENTRY.rTop + 800
+    && Math.hypot(cx - EXIT.x, cy - EXIT.y) - radius >= EXIT_PAD_R + 500;
   function box(name, cx, cy, sx, sy, h, rot, zOffset = 0) {
+    if (!clearsOpening(cx, cy, Math.hypot(sx, sy) * 0.5)) return;
     const c = Math.cos(rot), s = Math.sin(rot);
     // A centre-only sample leaves large blocks hanging over valleys. Greybox masses
     // may embed into a slope, but no part of their footprint may visibly float.
@@ -1320,7 +1370,6 @@ function writeGreybox(path) {
       V.push('v ' + x.toFixed(1) + ' ' + (-y).toFixed(1) + ' ' + z.toFixed(1));
     }
     const a = next; next += 8;
-    F.push('g ' + name);
     // OBJ mirrors authored Y. Reverse winding so every face still points outward.
     F.push('f ' + a + ' ' + (a+1) + ' ' + (a+2) + ' ' + (a+3));
     F.push('f ' + (a+4) + ' ' + (a+7) + ' ' + (a+6) + ' ' + (a+5));
@@ -1330,6 +1379,42 @@ function writeGreybox(path) {
     F.push('f ' + (a+3) + ' ' + (a+7) + ' ' + (a+4) + ' ' + a);
     blocks.push({ name: name, x: Math.round(cx), y: Math.round(cy),
                   sx: sx, sy: sy, h: h, rot: +rot.toFixed(4) });
+  }
+  function hexPrism(name, cx, cy, radius, h, rot, zOffset = 0) {
+    if (!clearsOpening(cx, cy, radius)) return;
+    let base = Infinity;
+    for (let i = 0; i < 6; i++) {
+      const a = rot + i * Math.PI / 3;
+      base = Math.min(base, surface(cx + Math.cos(a) * radius,
+                                    cy + Math.sin(a) * radius));
+    }
+    base = Math.min(base, surface(cx, cy)) + zOffset - 120;
+    const a0 = next;
+    for (const z of [base, base + h]) for (let i = 0; i < 6; i++) {
+      const a = rot + i * Math.PI / 3;
+      V.push('v ' + (cx + Math.cos(a) * radius).toFixed(1) + ' '
+        + (-(cy + Math.sin(a) * radius)).toFixed(1) + ' ' + z.toFixed(1));
+    }
+    next += 12;
+    F.push('f ' + [0,1,2,3,4,5].map(i => a0 + i).join(' '));
+    F.push('f ' + [11,10,9,8,7,6].map(i => a0 + i).join(' '));
+    for (let i = 0; i < 6; i++) {
+      const j = (i + 1) % 6;
+      F.push('f ' + (a0+i) + ' ' + (a0+6+i) + ' ' + (a0+6+j) + ' ' + (a0+j));
+    }
+    blocks.push({ name: name, shape: 'hex', x: Math.round(cx), y: Math.round(cy),
+                  sx: radius * 2, sy: radius * 2, radius: radius,
+                  h: h, rot: +rot.toFixed(4) });
+  }
+  function localBox(name, ox, oy, axis, u, v, sx, sy, h, rotOffset = 0, zOffset = 0) {
+    const cx = ox + Math.cos(axis) * u - Math.sin(axis) * v;
+    const cy = oy + Math.sin(axis) * u + Math.cos(axis) * v;
+    box(name, cx, cy, sx, sy, h, axis + rotOffset, zOffset);
+  }
+  function localHex(name, ox, oy, axis, u, v, radius, h, rotOffset = 0, zOffset = 0) {
+    const cx = ox + Math.cos(axis) * u - Math.sin(axis) * v;
+    const cy = oy + Math.sin(axis) * u + Math.cos(axis) * v;
+    hexPrism(name, cx, cy, radius, h, axis + rotOffset, zOffset);
   }
 
   // G0: an 18-part broken ring. From above it reads as a deliberate failed order;
@@ -1344,53 +1429,30 @@ function writeGreybox(path) {
         a + Math.PI / 2);
   }
 
-  // G1: paired flank stations repeat on the three routes. Their spacing, height and
-  // small rotational errors produce order from above while preserving route openings.
-  // Near pieces are human-scale cover; middle pieces read as ruined occupation;
-  // the last pieces become distant bearings in first person.
-  const stations = [
-    { d: 6500,  sx: 1100, sy: 520,  h: 170 },
-    { d: 8800,  sx: 1800, sy: 700,  h: 420 },
-    { d: 11200, sx: 1350, sy: 850,  h: 900 },
-    { d: 14000, sx: 2200, sy: 950,  h: 620 },
-    { d: 17800, sx: 1550, sy: 1100, h: 1700 },
-  ];
-  for (let bi = 0; bi < GREYBOX.branches.length; bi++) {
-    const b = GREYBOX.branches[bi];
-    const branchStations = b.name === 'SINK' ? stations.slice(0, 4) : stations;
-    for (let si = 0; si < branchStations.length; si++) {
-      const st = branchStations[si], d = st.d + bi * 180;
-      const ca = b.a + 0.06 * Math.sin(d / 4200 + b.a * 1.7);
-      for (const side of [-1, 1]) {
-        const sy = st.sy + 90 * ((bi + si + (side > 0 ? 1 : 0)) & 1);
-        const lateral = side * (b.half + 520 + sy / 2);
-        const cx = Math.cos(ca) * d - Math.sin(ca) * lateral;
-        const cy = Math.sin(ca) * d + Math.cos(ca) * lateral;
-        const h = st.h + 100 * ((bi + si + (side > 0 ? 1 : 0)) % 3);
-        box('G1_' + b.name + '_S' + si + '_' + (side > 0 ? 'R' : 'L'),
-            cx, cy, st.sx + 120 * bi, sy, h,
-            ca + (side > 0 ? 0.07 : -0.09) + (si % 2 ? 0.05 : 0));
-      }
-    }
-  }
-
-  // Six off-route piers hold the horizon together. Their radial symmetry is readable
-  // from the overview, while unequal heights stop the ground view becoming a toy set.
-  for (let i = 0; i < 6; i++) {
-    const a = 0.52 + i * Math.PI / 3;
-    const r = 19800 + (i % 2) * 650;
-    box('G2_OrderPier_' + i, Math.cos(a) * r, Math.sin(a) * r,
-        950 + 130 * (i % 3), 850, 1350 + 380 * ((i * 2) % 3),
-        a + Math.PI / 6);
-  }
-
-  // Faction ruins use the visual grammar already fixed by the K-11 documents.
-  // Resistance work is repaired, uneven and defensive.
   const sink = GREYBOX.branches[0], ruins = GREYBOX.branches[1], ridge = GREYBOX.branches[2];
-  box('SITE_Resistance_Gate_L', Math.cos(sink.a)*11700-Math.sin(sink.a)*3400,
-      Math.sin(sink.a)*11700+Math.cos(sink.a)*3400, 1900, 1350, 2900, sink.a - 0.18);
-  box('SITE_Resistance_Gate_R', Math.cos(sink.a)*12300+Math.sin(sink.a)*2700,
-      Math.sin(sink.a)*12300-Math.cos(sink.a)*2700, 1350, 1050, 1850, sink.a + 0.31);
+  function branchBox(name, b, d, lateral, sx, sy, h, rotOffset = 0) {
+    const ca = b.a + 0.06 * Math.sin(d / 4200 + b.a * 1.7);
+    const cx = Math.cos(ca) * d - Math.sin(ca) * lateral;
+    const cy = Math.sin(ca) * d + Math.cos(ca) * lateral;
+    box(name, cx, cy, sx, sy, h, ca + rotOffset);
+  }
+
+  // Each route carries a different sequence. SINK is a worked dry gorge, RUINS opens
+  // toward the spring settlement, and RIDGE stays sparse enough for geology to lead.
+  const routeScenes = [
+    ['G1_SINK_WashoutShelf', sink, 6500, -3500, 1500, 720, 260, -0.18],
+    ['G1_SINK_AbandonedStore', sink, 8300, 3600, 1250, 900, 760, 0.24],
+    ['G1_SINK_BrokenRetaining', sink, 10100, -3900, 2100, 620, 520, -0.11],
+    ['G1_SINK_RepairApproach', sink, 13700, 4200, 1650, 980, 940, 0.28],
+    ['G1_RUINS_RoadsideShell', ruins, 6200, -3900, 1300, 860, 620, -0.13],
+    ['G1_RUINS_SpringMarker', ruins, 7900, 4100, 820, 720, 1180, 0.21],
+    ['G1_RUINS_CollapsedHome', ruins, 9700, -4300, 1850, 1050, 540, -0.27],
+    ['G1_RUINS_StreetCorner', ruins, 12600, 4600, 1500, 980, 820, 0.16],
+    ['G1_RIDGE_LowerShelf', ridge, 6900, -3550, 1700, 920, 240, -0.31],
+    ['G1_RIDGE_SplitLedge', ridge, 10100, 3900, 1250, 760, 360, 0.37],
+    ['G1_RIDGE_OldSurveyWall', ridge, 13400, -4200, 1100, 620, 480, -0.16],
+  ];
+  for (const q of routeScenes) branchBox(...q);
 
   // Acceptance work is axial, intact and symmetric around a central hall.
   const tx = GREYBOX.sites.acceptance.x, ty = GREYBOX.sites.acceptance.y;
@@ -1400,6 +1462,75 @@ function writeGreybox(path) {
   const ay = Math.sin(ruins.a + Math.PI / 2) * 2500;
   box('SITE_Acceptance_Wing_L', tx + ax, ty + ay, 1700, 1200, 1800, ruins.a);
   box('SITE_Acceptance_Wing_R', tx - ax, ty - ay, 1700, 1200, 1800, ruins.a);
+
+  // The acceptance centre occupies an older spring settlement. The hall imposed a clean
+  // axis across crooked lanes; the outer homes still follow water and terrain.
+  const accAxis = ruins.a + 0.12;
+  const accPieces = [
+    ['CourtNorth',-1450,1550,1500,320,760,0.02], ['CourtSouth',1450,-1550,1500,320,760,-0.02],
+    ['CourtWest',-1650,-1250,340,1350,720,-0.03], ['CourtEast',1650,1250,340,1350,720,0.03],
+    ['ProcessionA',-3100,240,240,240,920,0], ['ProcessionB',-2250,-180,220,220,760,0],
+    ['ProcessionC',2250,180,220,220,760,0], ['ProcessionD',3100,-240,240,240,920,0],
+    ['SpringEdgeA',-4700,2850,980,720,520,-0.34], ['SpringEdgeB',-3650,3550,1260,840,760,-0.18],
+    ['SpringEdgeC',-2350,3900,820,680,460,0.22], ['SpringEdgeD',-900,4300,1450,760,620,0.31],
+    ['SpringEdgeE',650,4150,920,620,880,-0.27], ['SpringEdgeF',1850,3700,1180,820,560,-0.08],
+    ['OldLaneA',-4400,-2450,1320,760,820,0.29], ['OldLaneB',-3000,-3100,880,620,520,0.12],
+    ['OldLaneC',-1750,-3500,1150,880,690,-0.21], ['OldLaneD',-350,-3250,760,580,430,-0.38],
+    ['OldLaneE',1050,-3650,1380,760,920,0.17], ['OldLaneF',2550,-3150,920,680,580,0.35],
+    ['OldLaneG',3750,-2350,1240,840,740,-0.16], ['OldLaneH',4700,-1200,760,620,420,-0.31],
+    ['OuterHomeA',-5200,900,1100,760,620,-0.48], ['OuterHomeB',-5050,-900,740,620,380,0.41],
+    ['OuterHomeC',-4200,4700,930,700,540,0.18], ['OuterHomeD',-2300,5200,1250,760,700,-0.12],
+    ['OuterHomeE',150,5200,850,640,480,0.39], ['OuterHomeF',2500,4850,1380,820,820,-0.26],
+    ['OuterHomeG',4300,3650,980,700,560,0.14], ['OuterHomeH',5200,1800,1180,760,680,-0.37],
+    ['OuterHomeI',5100,250,760,620,420,0.28], ['OuterHomeJ',4400,-3900,1260,800,610,0.07],
+  ];
+  for (const q of accPieces) {
+    localBox('SITE_Acceptance_' + q[0], tx, ty, accAxis,
+             q[1], q[2], q[3], q[4], q[5], q[6]);
+  }
+
+  const rx = GREYBOX.sites.resistance.x, ry = GREYBOX.sites.resistance.y;
+  const resAxis = sink.a - 0.08;
+  // 抵抗派旧城保留旧稿的城市体量，落在干谷两侧的坡台上。六边形是原文明留下的
+  // 基本建造模数；抵抗派后来用直墙、支撑和补丁把它改成据点。中心堡、三座瞭望塔、
+  // 两条弯街和破口撤离线各有明确用途，俯视成秩序，落地看得到街巷和高差。
+  const resHex = [
+    ['CommandBase',0,0,1150,1050,0.00,0], ['CommandMid',0,0,820,950,0.00,920],
+    ['CommandCrown',0,0,500,720,0.00,1750], ['SignalSpine',0,0,210,2200,0.00,2350],
+    ['WatchWest',-4700,2600,520,3100,0.03,0], ['WatchWestCap',-4700,2600,760,220,0.03,2980],
+    ['WatchNorth',300,4750,500,2700,-0.04,0], ['WatchNorthCap',300,4750,720,210,-0.04,2580],
+    ['WatchEast',4650,1850,540,3300,0.02,0], ['WatchEastCap',4650,1850,780,230,0.02,3180],
+    ['WestBlockA',-3600,1250,760,1550,0.05,0], ['WestBlockB',-2850,2800,620,2100,-0.02,0],
+    ['WestBlockC',-1750,3850,680,1380,0.04,0], ['WestHomeA',-4800,-450,620,880,-0.03,0],
+    ['WestHomeB',-3900,-1750,700,1120,0.05,0], ['WestHomeC',-2450,-3000,580,760,-0.05,0],
+    ['NorthBlockA',-900,3300,720,1820,0.03,0], ['NorthBlockB',1250,3600,650,1460,-0.04,0],
+    ['NorthBlockC',2450,3100,760,2200,0.02,0], ['NorthHomeA',3650,3600,560,960,-0.05,0],
+    ['EastBlockA',3300,1450,720,1740,0.04,0], ['EastBlockB',4050,-150,620,2380,-0.02,0],
+    ['EastBlockC',3200,-1750,760,1320,0.03,0], ['EastHomeA',4700,-2100,580,920,-0.04,0],
+    ['SouthBlockA',1850,-3150,720,1660,0.05,0], ['SouthBlockB',150,-3850,640,1200,-0.03,0],
+    ['SouthBlockC',-1450,-3600,760,1980,0.02,0], ['InnerWest',-1550,900,520,1180,-0.04,0],
+    ['InnerNorth',-450,1900,470,1460,0.03,0], ['InnerEast',1650,1050,560,1280,-0.02,0],
+    ['InnerSouth',1050,-1350,500,980,0.04,0], ['InnerBreach',-900,-1450,430,620,-0.05,0],
+  ];
+  for (const q of resHex) {
+    localHex('SITE_Resistance_' + q[0], rx, ry, resAxis,
+             q[1], q[2], q[3], q[4], q[5], q[6]);
+  }
+  const resWorks = [
+    ['DryStreetWest',-2600,300,2450,520,180,-0.12,0], ['DryStreetEast',2350,250,2200,520,180,0.10,0],
+    ['RepairYard',-3050,-900,1800,1150,420,-0.18,0], ['RepairLeanTo',-2200,-1750,1150,680,520,0.27,0],
+    ['FailedGateL',800,2550,1200,520,1350,0.21,0], ['FailedGateR',1900,2200,980,480,980,-0.25,0],
+    ['BreachWall',2600,-700,2100,420,760,-0.31,0], ['BreachBrace',2050,-1150,360,1450,980,0.22,0],
+    ['EvacLaneA',-450,-2600,1700,380,180,0.18,0], ['EvacLaneB',900,-2500,1450,360,180,-0.16,0],
+    ['SupplyShell',-4300,900,1250,760,680,0.24,0], ['LastWall',3900,-3000,1650,420,860,0.33,0],
+    ['DebrisA',-3550,2100,720,420,180,-0.41,0], ['DebrisB',-1550,2600,860,440,220,0.28,0],
+    ['DebrisC',650,900,620,360,160,-0.19,0], ['DebrisD',2450,1700,760,420,210,0.39,0],
+    ['DebrisE',2650,-2450,680,400,180,-0.34,0], ['DebrisF',-2750,-2600,820,440,240,0.16,0],
+  ];
+  for (const q of resWorks) {
+    localBox('SITE_Resistance_' + q[0], rx, ry, resAxis,
+             q[1], q[2], q[3], q[4], q[5], q[6], q[7]);
+  }
 
   // G2's skyline comes from the eroded limestone and sinkholes in the surface mesh.
   // No architecture block is allowed to stand in for the pre-civilisation landform.
@@ -1412,8 +1543,19 @@ function writeGreybox(path) {
     box('SITE_Outsider_' + o.name + '_Pad', o.x, o.y, 900, 700, 90, a);
     box('SITE_Outsider_' + o.name + '_Case', o.x + 520*Math.cos(a), o.y + 520*Math.sin(a),
         420, 260, 310 + i * 90, a);
-    if (i === 1) {
-      box('SITE_Outsider_' + o.name + '_Mast', o.x - 360, o.y + 260, 130, 130, 620, a);
+    const scenes = i === 0 ? [
+      ['SampleRack',-620,420,520,180,260,-0.18], ['DroppedCrate',350,-680,360,280,220,0.31],
+      ['ShelterPanel',760,180,680,120,430,-0.11],
+    ] : i === 1 ? [
+      ['SurveyTable',-520,-430,620,420,310,0.22], ['Tripod',480,560,180,180,560,-0.14],
+      ['StakeNorth',-820,620,110,110,380,0.08], ['StakeSouth',720,-710,110,110,330,-0.19],
+    ] : [
+      ['PowerPack',-560,360,460,320,280,-0.27], ['CableReelA',520,470,300,300,240,0.16],
+      ['CableReelB',680,-320,260,260,190,-0.38], ['TimerScreen',-120,-720,420,160,390,0.09],
+    ];
+    for (const q of scenes) {
+      localBox('SITE_Outsider_' + o.name + '_' + q[0], o.x, o.y, a,
+               q[1], q[2], q[3], q[4], q[5], q[6]);
     }
   }
 
@@ -1433,7 +1575,7 @@ function writeGreybox(path) {
     }
   }
 
-  fs.writeFileSync(path, ['s off'].concat(V, F).join('\n'));
+  fs.writeFileSync(path, ['s off', 'g K11_Greybox'].concat(V, F).join('\n'));
   fs.writeFileSync(OUT + '/k11_greybox_layout.json', JSON.stringify({
     version: 1,
     zones: { core: GREYBOX.coreR, ruins: GREYBOX.ruinsR, danger: GREYBOX.dangerR },
@@ -1451,7 +1593,10 @@ function writeGreybox(path) {
   const py = y => 500 - y / 52;
   const polygon = b => {
     const c = Math.cos(b.rot), s = Math.sin(b.rot), pts = [];
-    for (const q of [[-b.sx/2,-b.sy/2],[b.sx/2,-b.sy/2],[b.sx/2,b.sy/2],[-b.sx/2,b.sy/2]]) {
+    const outline = b.shape === 'hex'
+      ? Array.from({length: 6}, (_, i) => [Math.cos(i*Math.PI/3)*b.radius, Math.sin(i*Math.PI/3)*b.radius])
+      : [[-b.sx/2,-b.sy/2],[b.sx/2,-b.sy/2],[b.sx/2,b.sy/2],[-b.sx/2,b.sy/2]];
+    for (const q of outline) {
       const x = b.x + q[0]*c - q[1]*s, y = b.y + q[0]*s + q[1]*c;
       pts.push(px(x).toFixed(1) + ',' + py(y).toFixed(1));
     }
@@ -1489,7 +1634,7 @@ function writeGreybox(path) {
     '<text x="340" y="70" fill="#d1b45b">PREVIOUS OUTSIDERS</text>',
     '</g></svg>');
   fs.writeFileSync(previewDir + '/k11_greybox_plan.svg', svg.join('\n'));
-  return { blocks: blocks.length, verts: V.length, faces: blocks.length * 6,
+  return { blocks: blocks.length, verts: V.length, faces: F.length,
            routeClearance: minRouteClearance, worstRouteBlock: worstRouteBlock };
 }
 
@@ -1511,7 +1656,6 @@ function writeSoilFill(path) {
              + ' ' + z.toFixed(1));
     }
     const a = next; next += 8;
-    F.push('g ' + name);
     F.push('f ' + a + ' ' + (a+1) + ' ' + (a+2) + ' ' + (a+3));
     F.push('f ' + (a+4) + ' ' + (a+7) + ' ' + (a+6) + ' ' + (a+5));
     F.push('f ' + a + ' ' + (a+4) + ' ' + (a+5) + ' ' + (a+1));
@@ -1539,12 +1683,14 @@ function writeSoilFill(path) {
     cells.push({ x: Math.round(x), y: Math.round(y), bottom: Math.round(bot),
                  top: Math.round(top) });
   }
-  fs.writeFileSync(path, ['s off'].concat(V, F).join('\n'));
+  // All cells share one material section. Separate OBJ groups made UE create one slot
+  // per cell and rebuild the same distance field hundreds of times during re-import.
+  fs.writeFileSync(path, ['s off', 'g K11_SoilFill'].concat(V, F).join('\n'));
   fs.writeFileSync(OUT + '/k11_soilfill_layout.json', JSON.stringify({
     version: 1, cell: CELL, gap: GAP, cells: cells,
     skippedOpen: skippedOpen, skippedThin: skippedThin,
   }, null, 2));
-  return { cells: cells.length, verts: V.length, faces: F.length,
+  return { cells: cells.length, verts: V.length, faces: cells.length * 6,
            skippedOpen: skippedOpen, skippedThin: skippedThin };
 }
 
@@ -2413,6 +2559,43 @@ function writeHexField(pathSolid, pathDeco, pathNav) {
       navBridges++;
     }
   }
+
+  // Recast 会把同一 XY 范围内重叠四圈的踏板拆成多层 tile。坑底收窄后，最低一圈
+  // 偶尔会在分层时丢掉。这里沿真实踏板中心补一条隐藏连续导航带，宽度落在踏板内部，
+  // 高度贴着每一级顶面。它同时给角色提供连续碰撞，视觉仍由六边形踏板负责。
+  const stairNavHalf = 150;
+  const stairNavVert = (x, y, z) => {
+    navV.push('v ' + x.toFixed(1) + ' ' + (-y).toFixed(1) + ' ' + z.toFixed(1));
+    return navV.length;
+  };
+  const stairNavCentre = k => {
+    const t = k / (ENTRY_STAIR_STEPS - 1);
+    const z0 = ENTRY.lip + (ENTRY.floor - ENTRY.lip) * t;
+    const th = -Math.PI * 0.35 + t * Math.PI * 2 * ENTRY_STAIR_TURNS;
+    const pitR = entryRadiusAt(z0);
+    const plateR = Math.max(220, Math.min(320, pitR * 0.32));
+    const rr = pitR - plateR * 1.15;
+    return [ENTRY.x + Math.cos(th) * rr, ENTRY.y + Math.sin(th) * rr, z0 + 3];
+  };
+  const stairNavSections = [];
+  for (let k = 0; k < ENTRY_STAIR_STEPS; k++) {
+    const p = stairNavCentre(k);
+    const a = stairNavCentre(Math.max(0, k - 1));
+    const b = stairNavCentre(Math.min(ENTRY_STAIR_STEPS - 1, k + 1));
+    const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len * stairNavHalf, ny = dx / len * stairNavHalf;
+    stairNavSections.push([
+      stairNavVert(p[0] + nx, p[1] + ny, p[2]),
+      stairNavVert(p[0] - nx, p[1] - ny, p[2]),
+    ]);
+  }
+  for (let k = 0; k < ENTRY_STAIR_STEPS - 1; k++) {
+    const aL = stairNavSections[k][0], aR = stairNavSections[k][1];
+    const bL = stairNavSections[k + 1][0], bR = stairNavSections[k + 1][1];
+    // OBJ 的 Y 镜像会翻转绕序，这里按镜像后的朝上方向写面。
+    navF.push('f ' + aL + ' ' + bL + ' ' + bR);
+    navF.push('f ' + aL + ' ' + bR + ' ' + aR);
+  }
   fs.writeFileSync(pathNav, navV.concat(navF).join('\n'));
 
   // 按实际写入导航面的格子统计连通块。这里不看 mazeCell 的“应该可走”，只看最终
@@ -2949,26 +3132,31 @@ function writeCrustFill(path) {
 // 这里先出第一区。密度用有符号距离而不是 ±1，等值面才不会是台阶状。
 const ROCK_CS = 200;
 
-// 逃生地道的三维距离（负=在管内）。用已经建好的空间哈希。
-function tunnelDist3(x, y, z, bore) {
+// 逃生地道的截面距离（负=在净空内）。净空跟着每个地道环走。
+// 旧版拿中心线做半径 5.5m 的圆管减法，连路板下方也挖空了 5m 多；编辑器里看到的
+// 黑缝就是这块多挖的体积。现在保留拱顶净空，路板底下和两侧贴着实体回填。
+function tunnelDist3(x, y, z, halfWidth) {
   if (!TUN_GRID) { return 1e9; }
   const gx = Math.floor(x / TUN_CS), gy = Math.floor(y / TUN_CS);
-  const rad = Math.ceil((bore + TUN_CS) / TUN_CS);
+  const rad = Math.ceil((halfWidth + TUN_CS) / TUN_CS);
   let best = 1e9;
   for (let i = -rad; i <= rad; i++) {
     for (let j = -rad; j <= rad; j++) {
       const arr = TUN_GRID.get((gx + i) + ',' + (gy + j));
       if (!arr) { continue; }
       for (const p of arr) {
-        const d = Math.hypot(x - p[0], y - p[1], z - p[2]);
+        const side = Math.hypot(x - p[0], y - p[1]) - halfWidth;
+        const belowFloor = p[2] - 100 - z;
+        const aboveArch = z - (p[2] + 560);
+        const d = Math.max(side, belowFloor, aboveArch);
         if (d < best) { best = d; }
       }
     }
   }
-  return best - bore;
+  return best;
 }
 
-const TUN_BORE = 550;      // 比管子外廓大一圈，保证岩层不会啃进管内
+const TUN_BORE = 410;      // 路面半宽 340；两侧留 70cm 给粗糙拱壁
 
 // ---------------- 第二层洞腔：留腔，不填 ----------------
 // 用户定的：第二层【不能全填】，要给它留一个腔，迷宫摆在腔里。

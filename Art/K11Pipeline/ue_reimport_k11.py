@@ -44,10 +44,11 @@ JOBS = [
 # k11_water 早已不再生成（迷宫足迹+入口排掉之后没有低于水线的格），旧的水面平面
 # 曾经泡住 56 个采样点的迷宫走廊，必须删掉而不是留着指向陈旧网格。
 # k11_crustfill 和各版独立 rock actor 都已被 K11_Surface 统一闭合土体取代。
-DELETE_LABELS = ['K11_Water', 'K11_CrustFill', 'K11_Rock', 'K11_RockUpper', 'K11_RockLower']
+DELETE_LABELS = ['K11_Water', 'K11_CrustFill', 'K11_Rock', 'K11_RockUpper', 'K11_RockLower',
+                 'K11_ExitApron', 'K11_CityShelf', 'K11_CitySky', 'K11_CitySun']
 DELETE_PREFIXES = ('K11_Col_', 'BoB_City_', 'BoB_Fill_W',
                    'BoB_Ruin_', 'BoB_Deco_', 'BoB_Elem_', 'BoB_Fill_',
-                   'BoB_CliffRock', 'SM_house')
+                   'BoB_CliffRock', 'SM_house', 'K11_BLOCK_')
 REDRAPE_PREFIXES = ('BoB_Loot2_', 'BoB_Floodlight_', 'BoB_Lore_', 'BoB_Prop_',
                     'BoB_Beacon_', 'BoB_Hermit', 'BoB_SupplyStation')
 # Water is a look-only plane: it must never block a capsule or generate navmesh.
@@ -57,6 +58,59 @@ GREYBOX_MATERIAL_LABELS = {'K11_Surface', 'K11_SoilFill', 'K11_Greybox',
                            'K11_Underground', 'K11_F0Access'}
 
 _les = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+
+
+def _stair_centre(k):
+    """Keep the two Recast layer joins tied to the authored crater stair."""
+    entry = dict(x=-9966.0, y=-14315.0, r_top=2200.0, r_bot=1050.0,
+                 lip=2590.0, floor=-3700.0)
+    steps, turns = 280, 4.2
+    t = k / (steps - 1.0)
+    z = entry['lip'] + (entry['floor'] - entry['lip']) * t
+    s = max(0.0, min(1.0, (z - entry['floor']) /
+                     (entry['lip'] - entry['floor'])))
+    raw = s ** (1 / 0.78)
+    inv = 0.5 - math.sin(math.asin(max(-1.0, min(1.0, 1 - 2 * raw))) / 3)
+    pit_r = entry['r_bot'] + max(0.0, min(1.0, inv)) * (
+        entry['r_top'] - entry['r_bot'])
+    plate_r = max(220.0, min(320.0, pit_r * 0.32))
+    radius = pit_r - plate_r * 1.15
+    angle = -math.pi * 0.35 + t * math.pi * 2 * turns
+    return unreal.Vector(entry['x'] + math.cos(angle) * radius,
+                         entry['y'] + math.sin(angle) * radius, z + 60)
+
+
+def ensure_stair_nav_links():
+    """Bridge the two layer seams Recast drops in the lower crater spiral.
+
+    Physical movement still follows the continuous treads. These links repair AI path
+    adjacency between stacked tile layers; they do not alter visible geometry.
+    """
+    pairs = ((228, 234), (234, 240))
+    wanted = {'K11_StairLink_%d_%d' % pair for pair in pairs}
+    existing = {a.get_actor_label(): a for a in _les.get_all_level_actors()
+                if a.get_actor_label().startswith('K11_StairLink_')}
+    for label, actor in existing.items():
+        if label not in wanted:
+            _les.destroy_actor(actor)
+    for i, j in pairs:
+        label = 'K11_StairLink_%d_%d' % (i, j)
+        a, b = _stair_centre(i), _stair_centre(j)
+        mid = (a + b) * 0.5
+        actor = existing.get(label)
+        if not actor:
+            actor = _les.spawn_actor_from_class(unreal.NavLinkProxy, mid,
+                                                 unreal.Rotator(0, 0, 0))
+            actor.set_actor_label(label)
+        else:
+            actor.set_actor_location(mid, False, False)
+        link = unreal.NavigationLink()
+        link.set_editor_property('left', a - mid)
+        link.set_editor_property('right', b - mid)
+        link.set_editor_property('direction', unreal.NavLinkDirection.BOTH_WAYS)
+        actor.set_editor_property('point_links', [link])
+        actor.set_editor_property('smart_link_is_relevant', False)
+    print('    crater stair nav layer joins: %d' % len(pairs))
 
 
 def ensure_soil_fill_material():
@@ -262,6 +316,7 @@ def run():
         repoint(lbl, m, mat)
     redrape_surface_gameplay()
     redrape_player_starts()
+    ensure_stair_nav_links()
     # Lvl_Shooter 是 World Partition 地图；Recast 仍保持模板默认的非分区模式时，
     # Navigation Data Builder 虽会写出 chunk actors，正常编辑器却继续读取旧整图 NavMesh。
     # 把导航数据本身切到分区模式，之后由官方 WorldPartitionNavigationDataBuilder

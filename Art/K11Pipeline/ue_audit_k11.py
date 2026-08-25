@@ -216,7 +216,13 @@ def a3b_surface_route_clearance():
     d = _greybox_layout() or {}
     blocks = d.get('blocks', [])
     clearance = d.get('checks', {}).get('routeClearanceCm', -9999)
-    ok = len(blocks) >= 55 and clearance >= 250
+    story_marks = {
+        'SITE_Acceptance_Hall', 'SITE_Acceptance_SpringEdgeA',
+        'SITE_Acceptance_OldLaneA', 'SITE_Resistance_CommandBase',
+        'SITE_Resistance_RepairYard', 'SITE_Resistance_InnerBreach',
+    }
+    names = {b.get('name') for b in blocks}
+    ok = clearance >= 250 and story_marks <= names
     report('A3b', 'surface greybox route clearance', ok,
            '%d blocks | minimum %dcm at %s'
            % (len(blocks), clearance,
@@ -235,14 +241,20 @@ def a4_history_layers():
     expected = {('A_PACK', 11200, 5200), ('B_MAP', -16400, 11800),
                 ('C_TIMER', -13500, -11500)}
     natural = set(d.get('naturalTraces', []))
-    ok = (any(n.startswith('SITE_Acceptance_') for n in names)
-          and any(n.startswith('SITE_Resistance_') for n in names)
+    acceptance = sum(n.startswith('SITE_Acceptance_') for n in names)
+    resistance = sum(n.startswith('SITE_Resistance_') for n in names)
+    outsider_blocks = sum(n.startswith('SITE_Outsider_') for n in names)
+    scene_marks = {
+        'SITE_Outsider_A_PACK_SampleRack',
+        'SITE_Outsider_B_MAP_SurveyTable',
+        'SITE_Outsider_C_TIMER_TimerScreen',
+    }
+    ok = (scene_marks <= set(names)
           and outsider_xyz == expected
           and {'jointed limestone', 'dry valleys', 'karst spring', 'sinkholes'} <= natural)
     report('A4', 'history layers present', ok,
            'natural %d | acceptance %d | resistance %d | outsiders %d/3'
-           % (len(natural), sum(n.startswith('SITE_Acceptance_') for n in names),
-              sum(n.startswith('SITE_Resistance_') for n in names), len(outsider_xyz & expected)))
+           % (len(natural), acceptance, resistance, len(outsider_xyz & expected)))
 
 
 def a5_greybox_transform():
@@ -564,6 +576,41 @@ def x_tunnel():
     report('S3', 'exit tunnel floor solid', miss == 0,
            '%d/%d ring centres have floor | grade %.1f deg, run %.0fm | on %s'
            % (solid, len(C), T['grade'], T['run'] / 100.0, dict(wrong.most_common(3))))
+
+    # The mouth used to be carved as a 5.5m-radius round bore around the floor centre.
+    # That left several metres of black air under the road even though S3 and nav passed.
+    # Check the last approach directly: soil must support the floor and close both shoulders.
+    ign_surface = _ignore_all_but({'K11_Surface'})
+    support, shoulders, wanted_support, wanted_shoulders = 0, 0, 0, 0
+    # Generator check confirms four rings legally break daylight. Earlier rings remain
+    # buried, so their shoulders are tunnel walls rather than exposed ground.
+    mouth_rings = C[-4:]
+    for i, (x, y, z) in enumerate(mouth_rings):
+        wanted_support += 1
+        h = unreal.SystemLibrary.line_trace_single(
+            W, unreal.Vector(x, y, z - 20), unreal.Vector(x, y, z - 320),
+            Q, True, ign_surface, unreal.DrawDebugTrace.NONE, True)
+        if h:
+            support += 1
+        if i == 0:
+            px, py = C[-5][0], C[-5][1]
+        else:
+            px, py = mouth_rings[i - 1][0], mouth_rings[i - 1][1]
+        dx, dy = x - px, y - py
+        dl = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / dl, dx / dl
+        for side in (-1, 1):
+            wanted_shoulders += 1
+            sx, sy = x + nx * side * 500, y + ny * side * 500
+            h = unreal.SystemLibrary.line_trace_single(
+                W, unreal.Vector(sx, sy, z + 120), unreal.Vector(sx, sy, z - 320),
+                Q, True, ign_surface, unreal.DrawDebugTrace.NONE, True)
+            if h:
+                shoulders += 1
+    report('S3b', 'exit mouth backfilled',
+           support == wanted_support and shoulders == wanted_shoulders,
+           'floor support %d/%d | shoulders %d/%d'
+           % (support, wanted_support, shoulders, wanted_shoulders))
 
     a, b = C[2], C[-3]
     pth = unreal.NavigationSystemV1.find_path_to_location_synchronously(
